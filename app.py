@@ -16,7 +16,7 @@ MODEL_MAPPING = {
     "DeepSeek R1": "deepseek-r1-distill-llama-70b",
     "Llama 8B": "llama3-8b-8192",
     "Llama 70B": "llama3-70b-8192",
-    "Gemini": "ge mma2-9b-it",
+    "Gemini": "gemma2-9b-it",
     "Mixtral": "mixtral-8x7b-32768"
 }
 
@@ -129,3 +129,5 @@ if user_prompt := st.chat_input("How can I help you?"):
 
     except Exception as e:
         st.error(f"⚠️ Error generating response: {str(e)}")
+
+        
