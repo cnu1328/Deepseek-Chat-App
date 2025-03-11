@@ -1,63 +1,114 @@
-import streamlit as st
 import os
 import time
-from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_groq import ChatGroq
+import streamlit as st
 from dotenv import load_dotenv
-import re
+from langchain_groq import ChatGroq
+from langchain_community.document_loaders import PyPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_chroma import Chroma
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain.chains import create_retrieval_chain
+from langchain_community.chat_message_histories import ChatMessageHistory
+from langchain.chains import create_history_aware_retriever
+from langchain_core.runnables.history import RunnableWithMessageHistory
 
-# Load environment variables
+from utils.utils import MODEL_MAPPING, PDF_PATH, CHROMA_DB_PATH
+from utils.prompts import System_Prompt, Contextualize_q_system_prompt
+
+# Load Environment Variables
 load_dotenv()
+
+# API Keys
+os.environ["HF_TOKEN"] = os.getenv("HF_TOKEN")
 groq_api_key = os.getenv("GROQ_API_KEY")
 
-# Model mapping dictionary
-MODEL_MAPPING = {
-    "DeepSeek R1": "deepseek-r1-distill-llama-70b",
-    "Llama 8B": "llama3-8b-8192",
-    "Llama 70B": "llama3-70b-8192",
-    "Gemini": "gemma2-9b-it",
-    "Mixtral": "mixtral-8x7b-32768"
-}
+embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
-# Model descriptions
-MODEL_DESCRIPTIONS = {
-    "DeepSeek R1": "DeepSeek R1 is a powerful LLaMA-based model optimized for efficiency and high-quality responses.",
-    "Llama 8B": "Llama 8B is a mid-sized model providing balanced performance and accuracy for various AI applications.",
-    "Llama 70B": "Llama 70B is an advanced model with enhanced capabilities for reasoning and detailed answers.",
-    "Gemini": "Gemini (Gemma2-9B) is a fine-tuned model designed for high-quality conversational AI.",
-    "Mixtral": "Mixtral 8x7B is a mixture of experts model providing exceptional performance on large-scale tasks."
-}
 
 # Streamlit Page Configuration
-st.set_page_config(page_title="All in One Chatbot", layout="centered")
+st.set_page_config(page_title="Questor - Study Assistant", layout="centered")
+
 
 # Sidebar Configuration
 with st.sidebar:
-    st.title("Chatbot Settings")
+    st.title("Questor - A Study Assistant")
+    st.markdown("<h3 style='text-align: left;'>Chatbot Settings</h3>", unsafe_allow_html=True)
 
     selected_model = st.selectbox("Select Model", list(MODEL_MAPPING.keys()))
     model_name = MODEL_MAPPING[selected_model]
-    
-    temperature = st.slider("Temperature", 0.0, 1.0, 0.7)
-    max_tokens = st.slider("Max Tokens", 100, 4096, 1024)
-    top_p = st.slider("Top-P", 0.0, 1.0, 1.0)
-    frequency_penalty = st.slider("Frequency Penalty", 0.0, 1.0, 0.0)
-    
-    if st.button("Clear Chat"):
-        st.session_state.messages = [
-            {"role": "assistant", "content": f"Hi, I'm All in One ChatModel! I use different AI models. You've selected **{selected_model}**."}
-        ]
-        st.rerun()
 
-# Initialize chat history
+
+qa_prompt = ChatPromptTemplate.from_messages([
+    ("system", System_Prompt),
+    MessagesPlaceholder("chat_history"),
+    ("human", "{input}")
+])
+
+# Helper function to create and load the vector database
+def load_or_create_chroma_db():
+    if os.path.exists(CHROMA_DB_PATH):
+        loader = PyPDFLoader(PDF_PATH)
+        docs = loader.load()
+
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+        final_documents = text_splitter.split_documents(docs)
+
+        vectordb = Chroma.from_documents(
+            documents=final_documents,
+            embedding=embeddings,
+            persist_directory=CHROMA_DB_PATH
+        )
+
+        return vectordb
+    else:
+        return Chroma(persist_directory=CHROMA_DB_PATH, embeddings_function=embeddings)
+
+
+# Load or create vector database
+vectordb = load_or_create_chroma_db()
+
+# Create retriever
+retriever = vectordb.as_retriever()
+
+contextualize_q_prompt = ChatPromptTemplate.from_messages([
+    ("system", Contextualize_q_system_prompt),
+    MessagesPlaceholder("chat_history"),
+    ("human", "{input}"),
+])
+
+# Initialize Chat Message History
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = ChatMessageHistory()
+
 if "messages" not in st.session_state:
     st.session_state.messages = [
-        {"role": "assistant", 
-         "content": f"Hi, I'm All in One ChatAPP! I use different AI models. You've selected **{selected_model}**.",
+        {
+            'role': "assistant", 
+            'content': "Hello! I'm Questor, your intelligent study companion. How can I assist you in your exam preparation today?"
         }
     ]
 
+
+llm = ChatGroq(
+    groq_api_key=groq_api_key, 
+    model_name=model_name
+)
+
+history_aware_retriever = create_history_aware_retriever(llm, retriever, contextualize_q_prompt)
+
+question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
+
+rag_chain = create_retrieval_chain(history_aware_retriever,question_answer_chain)
+
+rag_agent = RunnableWithMessageHistory(
+    rag_chain,
+    lambda session_id: st.session_state.chat_history,
+    input_messages_key="input",
+    history_messages_key='chat_history',
+    output_messages_key="answer",
+)
 
 # Display chat history with formatted response
 for message in st.session_state.messages:
@@ -67,56 +118,22 @@ for message in st.session_state.messages:
         if message["role"] == "assistant" and "caption" in message:
             st.caption(message["caption"])
 
-# Define prompt template
-prompt_template = ChatPromptTemplate.from_template(
-    """
-    You are {model_name}, a powerful AI model. 
-    {model_description}
+if user_prompt := st.chat_input("Ask me anything about your studies or exams..."):
     
-    Answer the question to the best of your ability, even if no additional context is provided.
-    Provide the most accurate response based on the question.
-    
-    <context>
-    {context}
-    </context>
-    
-    Question: {input}
-    """
-)
-
-# Chat input field
-if user_prompt := st.chat_input("How can I help you?"):
-    
-    # Add user message to session state
     st.session_state.messages.append({"role": "user", "content": user_prompt})
     with st.chat_message("user", avatar="👤"):
         st.markdown(user_prompt)
     
     try:
-        llm = ChatGroq(
-            groq_api_key=groq_api_key, 
-            model_name=model_name,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            top_p=top_p,
-            frequency_penalty=frequency_penalty
-        )
-
-        document_chain = create_stuff_documents_chain(llm, prompt_template)
-        
         start = time.process_time()
-        response = document_chain.invoke({
-            "input": user_prompt,
-            "model_name": selected_model,
-            "model_description": MODEL_DESCRIPTIONS[selected_model],
-            "context": "",
-        })
+
+        # Generate response using RAG Chain
+        response = rag_agent.invoke({"input": user_prompt}, config={"configurable": {"session_id": "chat_session"}})
+
         elapsed_time = time.process_time() - start
         
-        bot_response = response
+        bot_response = response["answer"]
 
-        print(bot_response)
-        
         # Store assistant response in session state
         st.session_state.messages.append({
             "role": "assistant", 
@@ -130,4 +147,3 @@ if user_prompt := st.chat_input("How can I help you?"):
     except Exception as e:
         st.error(f"⚠️ Error generating response: {str(e)}")
 
-        
