@@ -24,8 +24,6 @@ load_dotenv()
 os.environ["HF_TOKEN"] = os.getenv("HF_TOKEN")
 groq_api_key = os.getenv("GROQ_API_KEY")
 
-embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-
 
 # Streamlit Page Configuration
 st.set_page_config(page_title="Questor - Study Assistant", layout="centered")
@@ -34,16 +32,27 @@ st.set_page_config(page_title="Questor - Study Assistant", layout="centered")
 # Sidebar Configuration
 with st.sidebar:
     st.title("Questor - A Study Assistant")
-    st.markdown("<h3 style='text-align: left;'>Chatbot Settings</h3>", unsafe_allow_html=True)
+    st.write("**Chatbot Settings**")
 
     selected_model = st.selectbox("Select Model", list(MODEL_MAPPING.keys()))
     model_name = MODEL_MAPPING[selected_model]
 
+embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+llm = ChatGroq(
+    groq_api_key=groq_api_key, 
+    model_name=model_name
+)
 
 qa_prompt = ChatPromptTemplate.from_messages([
     ("system", System_Prompt),
     MessagesPlaceholder("chat_history"),
     ("human", "{input}")
+])
+
+contextualize_q_prompt = ChatPromptTemplate.from_messages([
+    ("system", Contextualize_q_system_prompt),
+    MessagesPlaceholder("chat_history"),
+    ("human", "{input}"),
 ])
 
 # Helper function to create and load the vector database
@@ -72,11 +81,6 @@ vectordb = load_or_create_chroma_db()
 # Create retriever
 retriever = vectordb.as_retriever()
 
-contextualize_q_prompt = ChatPromptTemplate.from_messages([
-    ("system", Contextualize_q_system_prompt),
-    MessagesPlaceholder("chat_history"),
-    ("human", "{input}"),
-])
 
 # Initialize Chat Message History
 if "chat_history" not in st.session_state:
@@ -90,11 +94,6 @@ if "messages" not in st.session_state:
         }
     ]
 
-
-llm = ChatGroq(
-    groq_api_key=groq_api_key, 
-    model_name=model_name
-)
 
 history_aware_retriever = create_history_aware_retriever(llm, retriever, contextualize_q_prompt)
 
