@@ -17,6 +17,10 @@ from langchain_core.runnables.history import RunnableWithMessageHistory
 from utils.utils import MODEL_MAPPING, PDF_PATH, CHROMA_DB_PATH
 from utils.prompts import System_Prompt, Contextualize_q_system_prompt
 
+__import__('pysqlite3')
+import sys
+sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+
 # Load Environment Variables
 load_dotenv()
 
