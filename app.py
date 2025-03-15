@@ -72,7 +72,7 @@ def load_or_create_chroma_db():
 
         return vectordb
     else:
-        return Chroma(persist_directory=CHROMA_DB_PATH, embeddings_function=embeddings)
+        return Chroma(persist_directory=CHROMA_DB_PATH, embedding_function=embeddings)
 
 
 # Load or create vector database
