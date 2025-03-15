@@ -8,3 +8,4 @@ python-dotenv          # Load environment variables from .env files
 
 langchain-huggingface
 langchain-chroma
+pysqlite3-binary
