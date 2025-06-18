@@ -10,3 +10,4 @@ langchain-huggingface
 langchain-chroma
 youtube-transcript-api
 ipykernel
+open
