@@ -8,6 +8,9 @@ from youtube_transcript_api import YouTubeTranscriptApi
 from groq import Groq
 import os
 from urllib.parse import urlparse, parse_qs
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Page configuration
 st.set_page_config(
@@ -95,11 +98,15 @@ def get_transcript(video_id):
         transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
         
         transcript = None
+
+        print(f"Availble transcripts for video {video_id}: {transcript_list}")
         
         # Try different approaches to get transcript
         try:
             # Try English first
             transcript = transcript_list.find_transcript(['en'])
+
+            
         except:
             try:
                 # Try manually created English transcript
@@ -124,11 +131,15 @@ def get_transcript(video_id):
                     except:
                         return None
         
+        print(f"Found transcript for video {video_id}: {transcript}")
+
         if not transcript:
             return None
         
         # Fetch the transcript data
         transcript_data = transcript.fetch()
+
+        print(f"Found transcript for video {video_id}: {transcript_data}")
         
         # Handle different transcript data formats
         if isinstance(transcript_data, list):
@@ -146,6 +157,11 @@ def get_transcript(video_id):
     except Exception as e:
         print(f"Error getting transcript for video {video_id}: {str(e)}")
         return None
+
+def remove_think_tags(text):
+        pattern = r'<think>.*?</think>'
+        cleaned_text = re.sub(pattern, '', text, flags=re.DOTALL)
+        return cleaned_text.strip()
 
 def summarize_with_groq(transcript, groq_api_key):
     """Generate summary using Groq's DeepSeek model."""
@@ -168,12 +184,15 @@ def summarize_with_groq(transcript, groq_api_key):
                     "content": f"Please provide a 5-6 line summary of this YouTube video transcript, focusing on the most important and valuable information:\n\n{transcript}"
                 }
             ],
-            model="deepseek-r1-distill-llama-70b",
-            temperature=0.3,
-            max_tokens=200
+            model="deepseek-r1-distill-llama-70b"
         )
         
-        return chat_completion.choices[0].message.content.strip()
+        summary = chat_completion.choices[0].message.content.strip()
+
+        print(f"Generated Summary: {summary}")
+
+        return remove_think_tags(summary)
+
         
     except Exception as e:
         st.error(f"Error generating summary with Groq: {str(e)}")
@@ -195,6 +214,7 @@ def process_youtube_links(df, groq_api_key, progress_bar, status_text):
             
             # Extract video ID
             video_id = extract_video_id(url)
+            print(f"Extracted Video ID: {video_id} from URL: {url}")
             if not video_id:
                 results.append({
                     'youtube_url': url,
@@ -261,21 +281,11 @@ def main():
     
     # Sidebar
     with st.sidebar:
-        st.header("⚙️ Configuration")
-        
-        # Groq API Key input
-        groq_api_key = st.text_input(
-            "Groq API Key",
-            type="password",
-            help="Enter your Groq API key to generate summaries"
-        )
+        groq_api_key = os.getenv("GROQ_API_KEY")
         
         if not groq_api_key:
             st.markdown('<div class="info-box">Please enter your Groq API key to proceed.</div>', unsafe_allow_html=True)
         
-        st.markdown("---")
-        
-        # File upload
         st.header("📁 Upload File")
         uploaded_file = st.file_uploader(
             "Choose an Excel file",
@@ -379,9 +389,5 @@ def main():
     elif not uploaded_file:
         st.markdown('<div class="info-box">Please upload an Excel or CSV file in the sidebar to get started.</div>', unsafe_allow_html=True)
     
-    # Footer
-    st.markdown("---")
-    st.markdown("**Note:** This application requires a valid Groq API key and processes YouTube videos that have available transcripts.")
-
 if __name__ == "__main__":
     main()
