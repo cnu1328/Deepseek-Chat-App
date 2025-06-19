@@ -6,6 +6,7 @@ from io import BytesIO
 import time
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api.proxies import WebshareProxyConfig
+from youtube_transcript_api.proxies import GenericProxyConfig
 from groq import Groq
 import os
 from urllib.parse import urlparse, parse_qs
@@ -14,6 +15,7 @@ from langchain_groq import ChatGroq
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import HumanMessage, SystemMessage
 import tiktoken
+import random
 
 load_dotenv()
 
@@ -95,18 +97,27 @@ def get_video_info(video_id):
     except Exception as e:
         st.error(f"Error fetching video info: {str(e)}")
         return None, None
-def get_transcript(video_id):
+def get_transcript(video_id, username, password, ip, port):
     """Get transcript for a YouTube video with language priority: en -> te -> any available."""
     try:
         # Configure proxy
-        proxy_config = WebshareProxyConfig(
-            proxy_username="pzpmgucx",
-            proxy_password="0dmj45cmkeb2",
+        # proxy_rotator = WebshareProxyRotator(
+        #     username=f"{username}",
+        #     password=f"{password}"
+        # )
+
+        ytt_api = YouTubeTranscriptApi(
+            proxy_config=GenericProxyConfig(
+                http_url=f"http://{username}:{password}@{ip}:{port}",
+                https_url=f"https://{username}:{password}@{ip}:{port}",
+            )
         )
         
         # Get available transcripts
+        transcript_list = ytt_api.list_transcripts(video_id)
         # transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        transcript_list = YouTubeTranscriptApi(proxy_config=proxy_config).list_transcripts(video_id)
+        # transcript_list = proxy_rotator.get_transcript_with_rotation(video_id)
+        # transcript_list = YouTubeTranscriptApi(proxy_config=proxy_config).list_transcripts(video_id)
         print(f"Available transcripts for video {video_id}: {[t.language_code for t in transcript_list]}")
         
         transcript = None
@@ -242,7 +253,7 @@ def summarize_with_groq(transcript, groq_api_key):
         
         # DeepSeek R1 context limit is approximately 32k tokens
         # Use 80% of that for safety: 32k * 0.8 = ~25.6k tokens
-        max_tokens_per_chunk = int(32000 * 0.8)
+        max_tokens_per_chunk = int(32000 * 0.5)
         
         # Count tokens in transcript
         total_tokens = count_tokens(transcript)
@@ -523,7 +534,7 @@ def remove_think_tags(text):
         cleaned_text = re.sub(pattern, '', text, flags=re.DOTALL)
         return cleaned_text.strip()
 
-def process_youtube_links(df, groq_api_key, progress_bar, status_text):
+def process_youtube_links(df, groq_api_key, progress_bar, status_text, username, password, ip, port):
     """Process all YouTube links in the dataframe."""
     results = []
     
@@ -561,7 +572,7 @@ def process_youtube_links(df, groq_api_key, progress_bar, status_text):
                 continue
             
             # Get transcript
-            transcript = get_transcript(video_id)
+            transcript = get_transcript(video_id, username, password, ip , port)
             if not transcript:
                 results.append({
                     'youtube_url': url,
@@ -607,6 +618,31 @@ def main():
     # Sidebar
     with st.sidebar:
         groq_api_key = os.getenv("GROQ_API_KEY")
+
+        username = st.sidebar.text_input(
+            "Username",
+            placeholder="Enter your Webshare username",
+            help="Your Webshare proxy username"
+        )
+        
+        password = st.sidebar.text_input(
+            "Password",
+            type="password",
+            placeholder="Enter your Webshare password",
+            help="Your Webshare proxy password"
+        )
+
+        ip = st.sidebar.text_input(
+            "IP Address",
+            placeholder="Enter your Webshare IP",
+            help="Your Webshare proxy IP "
+        )
+
+        port = st.sidebar.text_input(
+            "PORT",
+            placeholder="Enter your Webshare PORT",
+            help="Your Webshare proxy PORT"
+        )
         
         if not groq_api_key:
             st.markdown('<div class="info-box">Please enter your Groq API key to proceed.</div>', unsafe_allow_html=True)
@@ -630,7 +666,7 @@ def main():
         """)
     
     # Main content
-    if uploaded_file and groq_api_key:
+    if uploaded_file and groq_api_key and username and password and ip and port:
         try:
             # Read the uploaded file
             if uploaded_file.name.endswith('.csv'):
@@ -663,7 +699,7 @@ def main():
                 
                 # Process the videos
                 with st.spinner("Processing videos... This may take a while."):
-                    results_df = process_youtube_links(df, groq_api_key, progress_bar, status_text)
+                    results_df = process_youtube_links(df, groq_api_key, progress_bar, status_text, username, password, ip, port)
                     st.session_state['results_df'] = results_df
                 
             if 'results_df' in st.session_state:   
