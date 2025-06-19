@@ -100,8 +100,8 @@ def get_transcript(video_id):
     try:
         # Configure proxy
         proxy_config = WebshareProxyConfig(
-            proxy_username="emppxwos",
-            proxy_password="taeciknm5urr",
+            proxy_username="pzpmgucx",
+            proxy_password="0dmj45cmkeb2",
         )
         
         # Get available transcripts
