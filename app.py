@@ -155,7 +155,7 @@ def get_transcript(video_id):
         return full_transcript.strip()
         
     except Exception as e:
-        print(f"Error getting transcript for video {video_id}: {str(e)}")
+        st.write(f"Error getting transcript for video {video_id}: {str(e)}")
         return None
 
 def remove_think_tags(text):
