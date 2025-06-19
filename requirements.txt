@@ -11,3 +11,4 @@ langchain-chroma
 youtube-transcript-api
 ipykernel
 openpyxl
+tiktoken
