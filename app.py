@@ -4,9 +4,6 @@ import requests
 import re
 from io import BytesIO
 import time
-from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api.proxies import WebshareProxyConfig
-from youtube_transcript_api.proxies import GenericProxyConfig
 from groq import Groq
 import os
 from urllib.parse import urlparse, parse_qs
@@ -15,7 +12,8 @@ from langchain_groq import ChatGroq
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import HumanMessage, SystemMessage
 import tiktoken
-import random
+import json
+import http.client
 
 load_dotenv()
 
@@ -95,141 +93,84 @@ def get_video_info(video_id):
         else:
             return None, None
     except Exception as e:
-        st.error(f"Error fetching video info: {str(e)}")
+        print(f"Error fetching video info: {str(e)}")
         return None, None
-def get_transcript(video_id, username, password, ip, port):
-    """Get transcript for a YouTube video with language priority: en -> te -> any available."""
-    try:
-        # Configure proxy
-        # proxy_rotator = WebshareProxyRotator(
-        #     username=f"{username}",
-        #     password=f"{password}"
-        # )
 
-        ytt_api = YouTubeTranscriptApi(
-            proxy_config=GenericProxyConfig(
-                http_url=f"http://{username}:{password}@{ip}:{port}",
-                https_url=f"https://{username}:{password}@{ip}:{port}",
-            )
-        )
+def get_transcript_rapidapi(video_id):
+    """Get transcript for a YouTube video using RapidAPI."""
+    try:
+        # Get RapidAPI credentials from environment (fallback included)
+        rapidapi_key = os.getenv("RAPIDAPI_KEY", "5d77438fff12283713fefp1b2034jsn8b9390f2c5f5")
+        rapidapi_host = os.getenv("RAPIDAPI_HOST", "youtube-transcript3.p.rapidapi.com")
         
-        # Get available transcripts
-        transcript_list = ytt_api.list_transcripts(video_id)
-        # transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        # transcript_list = proxy_rotator.get_transcript_with_rotation(video_id)
-        # transcript_list = YouTubeTranscriptApi(proxy_config=proxy_config).list_transcripts(video_id)
-        print(f"Available transcripts for video {video_id}: {[t.language_code for t in transcript_list]}")
-        
-        transcript = None
-        
-        # Priority 1: Try English (en)
-        try:
-            transcript = transcript_list.find_transcript(['en'])
-            print(f"Found English transcript for video {video_id}")
-        except:
-            print("No English transcript available")
-            
-            # Priority 2: Try Telugu (te)
-            try:
-                transcript = transcript_list.find_transcript(['te'])
-                print(f"Found Telugu transcript for video {video_id}")
-            except:
-                print("No Telugu transcript available")
-                
-                # Priority 3: Try any available transcript
-                try:
-                    available_transcripts = list(transcript_list)
-                    if available_transcripts:
-                        transcript = available_transcripts[0]
-                        print(f"Found transcript in {transcript.language_code} for video {video_id}")
-                    else:
-                        print(f"No transcripts available for video {video_id}")
-                        return None
-                except Exception as e:
-                    print(f"Error accessing transcript list: {str(e)}")
-                    return None
-        
-        # If we found a transcript, fetch the data
-        if transcript:
-            try:
-                transcript_data = transcript.fetch()
-                print(f"Successfully fetched transcript data for video {video_id}")
-                
-                # Extract text from transcript data
-                print(f"Transcript data type: {type(transcript_data)}")
-                if transcript_data:
-                    print(f"First few items: {transcript_data[:2] if isinstance(transcript_data, list) else 'Not a list'}")
-                
-                full_transcript = ""
-                
-                if isinstance(transcript_data, list) and transcript_data:
-                    # Handle list of dictionaries
-                    for item in transcript_data:
-                        if isinstance(item, dict):
-                            # Try different possible keys for text content
-                            text = item.get('text', '') or item.get('content', '') or item.get('transcript', '')
-                            if text and text.strip():
-                                full_transcript += text.strip() + " "
-                        elif hasattr(item, 'text'):
-                            # Handle objects with text attribute
-                            if item.text and item.text.strip():
-                                full_transcript += item.text.strip() + " "
-                        elif isinstance(item, str):
-                            # Handle direct string items
-                            if item.strip():
-                                full_transcript += item.strip() + " "
-                
-                elif isinstance(transcript_data, str):
-                    # Handle direct string format
-                    full_transcript = transcript_data.strip()
-                
-                elif hasattr(transcript_data, '__iter__'):
-                    # Handle other iterable formats
-                    try:
-                        for item in transcript_data:
-                            if isinstance(item, dict):
-                                text = item.get('text', '') or item.get('content', '')
-                                if text:
-                                    full_transcript += text.strip() + " "
-                            elif hasattr(item, 'text'):
-                                if item.text:
-                                    full_transcript += item.text.strip() + " "
-                            elif isinstance(item, str):
-                                full_transcript += item.strip() + " "
-                    except Exception as iter_error:
-                        print(f"Error iterating transcript data: {str(iter_error)}")
-                        return None
-                
-                else:
-                    print(f"Unexpected transcript data format for video {video_id}: {type(transcript_data)}")
-                    # Try to convert to string as last resort
-                    try:
-                        full_transcript = str(transcript_data)
-                    except:
-                        return None
-                
-                # Clean up and return
-                full_transcript = full_transcript.strip()
-                if full_transcript:
-                    print(f"Successfully extracted transcript with {len(full_transcript)} characters")
-                    return full_transcript
-                else:
-                    print(f"No text content found in transcript data for video {video_id}")
-                    return None
-                    
-            except Exception as e:
-                print(f"Error fetching transcript data for video {video_id}: {str(e)}")
-                return None
-        else:
-            print(f"No transcript found for video {video_id}")
+        if not rapidapi_key:
+            print("RapidAPI key not found in environment variables")
             return None
-            
+
+        conn = http.client.HTTPSConnection(rapidapi_host)
+
+        headers = {
+            'x-rapidapi-key': rapidapi_key,
+            'x-rapidapi-host': rapidapi_host
+        }
+
+        # Correct endpoint path
+        conn.request("GET", f"/api/transcript?videoId={video_id}", headers=headers)
+
+        res = conn.getresponse()
+        data = res.read()
+
+        # Parse JSON
+        json_data = json.loads(data.decode("utf-8"))
+
+        # Extract and combine transcript text
+        transcript_items = json_data.get("transcript", [])
+        full_transcript = " ".join(item.get("text", "") for item in transcript_items)
+
+        return full_transcript.strip() if full_transcript.strip() else None
+
     except Exception as e:
-        print(f"Error getting transcript for video {video_id}: {str(e)}")
-        # Check if it's a specific "no transcript" error
-        if "No transcripts" in str(e) or "transcript" in str(e).lower():
-            print(f"Video {video_id} has no available transcripts")
+        print(f"An exception occurred: {str(e)}")
         return None
+
+# def get_transcript_alternative_rapidapi(video_id):
+#     """Alternative RapidAPI endpoint for YouTube transcripts."""
+#     try:
+#         rapidapi_key = os.getenv("RAPIDAPI_KEY")
+        
+#         if not rapidapi_key:
+#             return None
+        
+#         # Alternative RapidAPI endpoint
+#         url = "https://youtube-transcript-api1.p.rapidapi.com/transcript"
+        
+#         headers = {
+#             "X-RapidAPI-Key": rapidapi_key,
+#             "X-RapidAPI-Host": "youtube-transcript-api1.p.rapidapi.com"
+#         }
+        
+#         params = {
+#             "video_id": video_id
+#         }
+        
+#         response = requests.get(url, headers=headers, params=params, timeout=30)
+        
+#         if response.status_code == 200:
+#             data = response.json()
+            
+#             if 'transcript' in data:
+#                 transcript_text = ""
+#                 for item in data['transcript']:
+#                     if 'text' in item:
+#                         transcript_text += item['text'] + " "
+                
+#                 return transcript_text.strip() if transcript_text.strip() else None
+            
+#         return None
+        
+#     except Exception as e:
+#         print(f"Alternative RapidAPI error: {str(e)}")
+#         return None
 
 def count_tokens(text, model="gpt-3.5-turbo"):
     """Count tokens in text using tiktoken (approximate for DeepSeek)."""
@@ -246,14 +187,12 @@ def summarize_with_groq(transcript, groq_api_key):
         # Initialize LangChain Groq client
         llm = ChatGroq(
             groq_api_key=groq_api_key,
-            model_name="deepseek-r1-distill-llama-70b",
-            temperature=0.3,
-            max_tokens=2048
+            model_name="deepseek-r1-distill-llama-70b"
         )
         
         # DeepSeek R1 context limit is approximately 32k tokens
-        # Use 80% of that for safety: 32k * 0.8 = ~25.6k tokens
-        max_tokens_per_chunk = int(32000 * 0.5)
+        # Use 50% of that for safety: 32k * 0.5 = ~16k tokens
+        max_tokens_per_chunk = 3000 #int(32000 * 0.5)
         
         # Count tokens in transcript
         total_tokens = count_tokens(transcript)
@@ -280,12 +219,11 @@ def detect_transcript_language(transcript):
     if any(char in transcript for char in telugu_chars):
         return 'telugu'
     
-    # Hindi indicators  
+    # # Hindi indicators  
     # hindi_chars = ['अ', 'आ', 'इ', 'ई', 'उ', 'ऊ', 'ए', 'ऐ', 'ओ', 'औ', 'क', 'ग', 'च', 'ज', 'ट', 'ड', 'त', 'द', 'न', 'प', 'ब', 'म', 'य', 'र', 'ल', 'व', 'श', 'ष', 'स', 'ह']
     # if any(char in transcript for char in hindi_chars):
     #     return 'hindi'
     
-    # Add more language patterns as needed
     # Default to English if no specific patterns found
     return 'english'
 
@@ -348,7 +286,7 @@ def generate_single_summary(llm, transcript):
 
             एक स्पष्ट, आकर्षक सारांश प्रदान करें जो दर्शकों को वीडियो के मूल्य को समझने में मदद करे:""",
                         
-                        'english': f"""Analyze this YouTube video transcript and provide a comprehensive 4-5 line summary that captures:
+            'english': f"""Analyze this YouTube video transcript and provide a comprehensive 4-5 line summary that captures:
             1. The main topic/theme of the video
             2. Key points or arguments presented
             3. Important insights or takeaways
@@ -382,9 +320,8 @@ def generate_chunked_summary(llm, transcript, max_tokens_per_chunk):
         
         # Split transcript into chunks
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=max_tokens_per_chunk * 3,  # Approximate characters per chunk
+            chunk_size=max_tokens_per_chunk,  # Approximate characters per chunk
             chunk_overlap=200,  # Small overlap to maintain context
-            separators=["\n\n", "\n", ". ", " ", ""]
         )
         
         chunks = text_splitter.split_text(transcript)
@@ -410,7 +347,7 @@ def generate_chunked_summary(llm, transcript, max_tokens_per_chunk):
 
             సంక్షిప్త 2-3 వాక్య సారాంశం అందించండి:""",
                         
-                        'hindi': """इस वीडियो ट्रांसक्रिप्ट खंड को बिल्कुल 2-3 स्पष्ट, जानकारीपूर्ण वाक्यों में सारांशित करें। इन पर ध्यान दें:
+            'hindi': """इस वीडियो ट्रांसक्रिप्ट खंड को बिल्कुल 2-3 स्पष्ट, जानकारीपूर्ण वाक्यों में सारांशित करें। इन पर ध्यान दें:
             - इस खंड में चर्चा किए गए मुख्य विषय
             - प्रस्तुत मुख्य अंतर्दृष्टि या जानकारी
             - महत्वपूर्ण बिंदु जो दर्शकों को जानने चाहिए
@@ -420,7 +357,7 @@ def generate_chunked_summary(llm, transcript, max_tokens_per_chunk):
 
             संक्षिप्त 2-3 वाक्य सारांश प्रदान करें:""",
                         
-                        'english': """Summarize this video transcript segment in exactly 2-3 clear, informative lines. Focus on:
+            'english': """Summarize this video transcript segment in exactly 2-3 clear, informative lines. Focus on:
             - Main topics discussed in this segment
             - Key insights or information presented
             - Important points that viewers should know
@@ -475,7 +412,7 @@ def generate_final_summary(llm, chunk_summaries, detected_language='english'):
         }
         
         final_user_prompts = {
-            'telugu': f"""YouTube वीडियो నుండి వచ్చిన ఈ భాగ సారాంశాల ఆధారంగా, ఈ అంశాలను కలిగి ఉన్న పూర్తి 4-5 వాక్య చివరి సారాంశం రూపొందించండి:
+            'telugu': f"""YouTube वीडియో నుండి వచ్చిన ఈ భాగ సారాంశాల ఆధారంగా, ఈ అంశాలను కలిగి ఉన్న పూర్తి 4-5 వాక్య చివరి సారాంశం రూపొందించండి:
 
             1. మొత్తం వీడియో యొక్క సమగ్ర థీమ్ మరియు ముఖ్య సందేశాన్ని కలిగి ఉండాలి
             2. అన్ని భాగాలలో అత్యధిక ముఖ్యమైన అంతర్దృష్టులను హైలైట్ చేయాలి
@@ -488,7 +425,7 @@ def generate_final_summary(llm, chunk_summaries, detected_language='english'):
 
             పూర్తి వీడియో యొక్క శుద్ధమైన, ఆకర్షణీయమైన 4-5 వాక్య సారాంశం రూపొందించండి:""",
                         
-                        'hindi': f"""इस YouTube वीडियो के खंड सारांशों के आधार पर, एक व्यापक 4-5 वाक्य अंतिम सारांश बनाएं जो:
+            'hindi': f"""इस YouTube वीडियो के खंड सारांशों के आधार पर, एक व्यापक 4-5 वाक्य अंतिम सारांश बनाएं जो:
 
             1. पूरे वीडियो की समग्र थीम और मुख्य संदेश को कैप्चर करे
             2. सभी खंडों में सबसे महत्वपूर्ण अंतर्दृष्टि को हाइलाइट करे
@@ -501,7 +438,7 @@ def generate_final_summary(llm, chunk_summaries, detected_language='english'):
 
             पूर्ण वीडियो का एक परिष्कृत, आकर्षक 4-5 वाक्य सारांश बनाएं:""",
                         
-                        'english': f"""Based on these segment summaries from a YouTube video, create a comprehensive 4-5 line final summary that:
+            'english': f"""Based on these segment summaries from a YouTube video, create a comprehensive 4-5 line final summary that:
 
             1. Captures the overall theme and main message of the entire video
             2. Highlights the most important insights across all segments  
@@ -530,11 +467,12 @@ def generate_final_summary(llm, chunk_summaries, detected_language='english'):
         return "Final summary generation failed"
 
 def remove_think_tags(text):
-        pattern = r'<think>.*?</think>'
-        cleaned_text = re.sub(pattern, '', text, flags=re.DOTALL)
-        return cleaned_text.strip()
+    """Remove thinking tags from text."""
+    pattern = r'<think>.*?</think>'
+    cleaned_text = re.sub(pattern, '', text, flags=re.DOTALL)
+    return cleaned_text.strip()
 
-def process_youtube_links(df, groq_api_key, progress_bar, status_text, username, password, ip, port):
+def process_youtube_links(df, groq_api_key, progress_bar, status_text):
     """Process all YouTube links in the dataframe."""
     results = []
     
@@ -572,7 +510,7 @@ def process_youtube_links(df, groq_api_key, progress_bar, status_text, username,
                 continue
             
             # Get transcript
-            transcript = get_transcript(video_id, username, password, ip , port)
+            transcript = get_transcript_rapidapi(video_id)
             if not transcript:
                 results.append({
                     'youtube_url': url,
@@ -619,30 +557,30 @@ def main():
     with st.sidebar:
         groq_api_key = os.getenv("GROQ_API_KEY")
 
-        username = st.sidebar.text_input(
-            "Username",
-            placeholder="Enter your Webshare username",
-            help="Your Webshare proxy username"
-        )
+        # username = st.sidebar.text_input(
+        #     "Username",
+        #     placeholder="Enter your Webshare username",
+        #     help="Your Webshare proxy username"
+        # )
         
-        password = st.sidebar.text_input(
-            "Password",
-            type="password",
-            placeholder="Enter your Webshare password",
-            help="Your Webshare proxy password"
-        )
+        # password = st.sidebar.text_input(
+        #     "Password",
+        #     type="password",
+        #     placeholder="Enter your Webshare password",
+        #     help="Your Webshare proxy password"
+        # )
 
-        ip = st.sidebar.text_input(
-            "IP Address",
-            placeholder="Enter your Webshare IP",
-            help="Your Webshare proxy IP "
-        )
+        # ip = st.sidebar.text_input(
+        #     "IP Address",
+        #     placeholder="Enter your Webshare IP",
+        #     help="Your Webshare proxy IP "
+        # )
 
-        port = st.sidebar.text_input(
-            "PORT",
-            placeholder="Enter your Webshare PORT",
-            help="Your Webshare proxy PORT"
-        )
+        # port = st.sidebar.text_input(
+        #     "PORT",
+        #     placeholder="Enter your Webshare PORT",
+        #     help="Your Webshare proxy PORT"
+        # )
         
         if not groq_api_key:
             st.markdown('<div class="info-box">Please enter your Groq API key to proceed.</div>', unsafe_allow_html=True)
@@ -666,7 +604,7 @@ def main():
         """)
     
     # Main content
-    if uploaded_file and groq_api_key and username and password and ip and port:
+    if uploaded_file and groq_api_key:
         try:
             # Read the uploaded file
             if uploaded_file.name.endswith('.csv'):
@@ -699,7 +637,7 @@ def main():
                 
                 # Process the videos
                 with st.spinner("Processing videos... This may take a while."):
-                    results_df = process_youtube_links(df, groq_api_key, progress_bar, status_text, username, password, ip, port)
+                    results_df = process_youtube_links(df, groq_api_key, progress_bar, status_text)
                     st.session_state['results_df'] = results_df
                 
             if 'results_df' in st.session_state:   
