@@ -100,8 +100,8 @@ def get_transcript_rapidapi(video_id):
     """Get transcript for a YouTube video using RapidAPI."""
     try:
         # Get RapidAPI credentials from environment (fallback included)
-        rapidapi_key = os.getenv("RAPIDAPI_KEY", "5d77438fff12283713fefp1b2034jsn8b9390f2c5f5")
-        rapidapi_host = os.getenv("RAPIDAPI_HOST", "youtube-transcript3.p.rapidapi.com")
+        rapidapi_key = os.getenv("RAPIDAPI_KEY")
+        rapidapi_host = os.getenv("RAPIDAPI_HOST")
         
         if not rapidapi_key:
             print("RapidAPI key not found in environment variables")
