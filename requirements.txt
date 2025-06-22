@@ -12,3 +12,4 @@ youtube-transcript-api
 ipykernel
 openpyxl
 tiktoken
+plotly
