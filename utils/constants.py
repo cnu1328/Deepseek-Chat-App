@@ -2,7 +2,8 @@ CHUNK_SIZE = 3500
 CHUNK_OVERLAP = 200
 CHUNK_SUMMARY_LINES = "2 - 3"
 FINAL_SUMMARY_LINES = "4 - 5"
-MODEL_NAME="deepseek-r1-distill-llama-70b"
+# MODEL_NAME="deepseek-r1-distill-llama-70b"
+MODEL_NAME='qwen-qwq-32b'
 
 CHUNK_SYSTEM_MESSAGES = {
     'telugu': """మీరు వీడియో ట్రాన్స్‌క్రిప్ట్ భాగాల సంక్షిప్త సారాంశాలు రూపకల్పనలో నిపుణుడు. ప్రతి భాగం నుండి అత్యధిక ముఖ్యమైన సమాచారాన్ని వెలికితీయడంపై దృష్టి పెట్టండి.""",
