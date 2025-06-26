@@ -266,7 +266,7 @@ class YouTubeServiceClass:
                 'publishedAfter': published_after,
                 'type': 'video',
                 'order': 'date',
-                'maxResults': 3,
+                'maxResults': 1,
                 'key': self.youtube_api_key
             }
 
@@ -290,9 +290,11 @@ class YouTubeServiceClass:
 
             except requests.exceptions.RequestException as e:
                 print(f"[ERROR] API Request failed for {channel_id}: {e}")
+                st.write(str(e))
                 continue
             except KeyError as e:
                 print(f"[ERROR] Key error for {channel_id}: {e}")
+                st.write(str(e))
                 continue
 
         global_stats = {
@@ -319,11 +321,15 @@ class YouTubeServiceClass:
 
             json_data = json.loads(data.decode("utf-8"))
 
+            print("Json data :: ", json_data)
             transcript_items = json_data.get("transcript", [])
             full_transcript = " ".join(item.get("text", "") for item in transcript_items)
+
+            print(f"Full Trainscript :: {full_transcript}")
 
             return full_transcript.strip() if full_transcript.strip() else None
         
         except Exception as e:
             print(f"An exception occurred in get_transcript_rapidapi : {str(e)}")
+            st.write(str(e))
             return None
