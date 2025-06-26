@@ -240,7 +240,7 @@ class YouTubeServiceClass:
             self.rapidapi_base_url = os.getenv("RAPIDAPI_BASE_URL")
             self.initialized = True
 
-    def get_recent_videos_and_stats_by_channels(self, channel_ids: List[str], hours: int = 24):
+    def get_recent_videos_and_stats_by_channels_v1(self, channel_ids: List[str], hours: int = 24):
         """
         Fetch videos uploaded in the last `hours` from multiple YouTube channels.
 
@@ -295,6 +295,83 @@ class YouTubeServiceClass:
             except KeyError as e:
                 print(f"[ERROR] Key error for {channel_id}: {e}")
                 st.write(str(e))
+                continue
+
+        global_stats = {
+            "total_channels": len(channel_stats),
+            "total_videos": sum(c["total_videos"] for c in channel_stats.values())
+        }
+
+        return pd.DataFrame(all_videos), dict(channel_stats), global_stats
+    
+
+    def get_recent_videos_and_stats_by_channels(self, channel_ids: List[str], hours: int = 24):
+        """
+        Optimized YouTube API version to fetch recent videos using 1 + N quota units.
+
+        Args:
+            channel_ids (List[str]): List of YouTube channel IDs.
+            hours (int): Number of past hours to search.
+
+        Returns:
+            Tuple[pd.DataFrame, dict, dict]: video dataframe, per-channel stats, global stats.
+        """
+        published_after = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        all_videos = []
+        channel_stats = defaultdict(lambda: {"total_videos": 0})
+
+        # Step 1: Fetch all channels' upload playlist IDs in a single call (1 quota unit)
+        try:
+            channels_url = "https://www.googleapis.com/youtube/v3/channels"
+            channel_id_str = ",".join(channel_ids)
+            params = {
+                "part": "contentDetails",
+                "id": channel_id_str,
+                "key": self.youtube_api_key
+            }
+
+            resp = requests.get(channels_url, params=params)
+            resp.raise_for_status()
+            channel_data = resp.json()
+        except Exception as e:
+            print(f"[ERROR] Failed to fetch channel details: {e}")
+            return pd.DataFrame(), {}, {}
+
+        uploads_map = {}  # channel_id -> uploads playlist id
+        for item in channel_data.get("items", []):
+            uploads_map[item["id"]] = item["contentDetails"]["relatedPlaylists"]["uploads"]
+
+        # Step 2: Fetch latest video from each uploads playlist (1 quota unit per playlistItems.list call)
+        for channel_id, uploads_playlist_id in uploads_map.items():
+            try:
+                playlist_url = "https://www.googleapis.com/youtube/v3/playlistItems"
+                params = {
+                    "part": "snippet",
+                    "playlistId": uploads_playlist_id,
+                    "maxResults": 1,
+                    "key": self.youtube_api_key
+                }
+
+                resp = requests.get(playlist_url, params=params)
+                resp.raise_for_status()
+                playlist_data = resp.json()
+
+                for item in playlist_data.get("items", []):
+                    published_at = pd.to_datetime(item["snippet"]["publishedAt"])
+                    if published_at >= pd.to_datetime(published_after):
+                        video = {
+                            'channel_id': channel_id,
+                            'channel': item["snippet"]["channelTitle"],
+                            'video_id': item["snippet"]["resourceId"]["videoId"],
+                            'title': item["snippet"]["title"],
+                            'published_at': published_at,
+                            'video_url': f"{self.youtube_base_video_url}{item['snippet']['resourceId']['videoId']}"
+                        }
+
+                        all_videos.append(video)
+                        channel_stats[video["channel"]]["total_videos"] += 1
+            except Exception as e:
+                print(f"[ERROR] Failed to fetch playlist items for {channel_id}: {e}")
                 continue
 
         global_stats = {
