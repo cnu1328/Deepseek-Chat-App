@@ -100,7 +100,6 @@ def main():
     
     search_button = st.sidebar.button(
         "🚀 Start Search",
-        disabled=not search_query or st.session_state.is_searching,
         use_container_width=True
     )
         
@@ -126,45 +125,49 @@ def main():
     #                      latest_video['published_date'].strftime("%Y-%m-%d"))
     
     # Search execution
-    if search_button and search_query and selected_period:
-        st.session_state.is_searching = True
-        
-        # Convert selected periods to days
-        period_mapping = {period[0]: period[1] for period in time_periods}
-        selected_days = period_mapping[selected_period]
-        
-        # Progress tracking
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        try:
-            # Initialize searcher
-            searcher = YouTubeSearcher()
+    if search_button and selected_period and not st.session_state.is_searching:
+
+        if not search_query:
+            st.error(f"Please enter Hashtag or Query")
+        else:
+            st.session_state.is_searching = True
             
-            # Run async search
-            results = asyncio.run(
-                searcher.search_videos_async(
-                    query=search_query,
-                    time_periods_days=[selected_days],
-                    progress_callback=lambda p, s: (
-                        progress_bar.progress(p),
-                        status_text.text(s)
+            # Convert selected periods to days
+            period_mapping = {period[0]: period[1] for period in time_periods}
+            selected_days = period_mapping[selected_period]
+            
+            # Progress tracking
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            try:
+                # Initialize searcher
+                searcher = YouTubeSearcher()
+                
+                # Run async search
+                results = asyncio.run(
+                    searcher.search_videos_async(
+                        query=search_query,
+                        time_periods_days=[selected_days],
+                        progress_callback=lambda p, s: (
+                            progress_bar.progress(p),
+                            status_text.text(s)
+                        )
                     )
                 )
-            )
-            
-            st.session_state.search_results = results
-            st.session_state.is_searching = False
-            
-            progress_bar.progress(1.0)
-            status_text.text("✅ Search completed successfully!")
-            
-            st.success(f"Found {len(results)} videos!")
-            
-        except Exception as e:
-            st.session_state.is_searching = False
-            st.error(f"❌ Error during search: {str(e)}")
-            return
+                
+                st.session_state.search_results = results
+                st.session_state.is_searching = False
+                
+                progress_bar.progress(1.0)
+                status_text.text("✅ Search completed successfully!")
+                
+                st.success(f"Found {len(results)} videos!")
+                
+            except Exception as e:
+                st.session_state.is_searching = False
+                st.error(f"❌ Error during search: {str(e)}")
+                return
     
     if st.session_state.search_results:
         st.subheader("📋 Search Results")
