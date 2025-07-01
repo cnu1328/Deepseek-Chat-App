@@ -15,6 +15,7 @@ import tiktoken
 import json
 import http.client
 from styles import load_common_stylings
+import asyncio
 from utils.utils import CommonFunctionClass, YouTubeServiceClass, StreamlitServiceClass, \
     AgentServiceClass
 
@@ -78,7 +79,7 @@ def main():
             streamlit_service = StreamlitServiceClass()
             agent_service = AgentServiceClass()
 
-            all_videos_df, channel_stats, global_stats = youtube_service.get_recent_videos_and_stats_by_channels(channel_ids, selected_hours)
+            all_videos_df, channel_stats, global_stats = asyncio.run(youtube_service.get_recent_videos_and_stats_by_channels(channel_ids, selected_hours))
 
             st.session_state["results_df"] = all_videos_df
             st.session_state["channel_stats"] = channel_stats
@@ -103,34 +104,61 @@ def main():
                 two_line_summaries = []
                 sentiments = []
 
-                with st.spinner("🔄 Generating summaries... This may take a while."):
+                async def generate_all_summaries():
                     total = len(all_videos_df)
-
+                    tasks = []
                     for i, row in all_videos_df.iterrows():
                         video_id = row["video_id"]
-                        percent_complete = int(((i + 1) / total) * 100)
+                        percent_complete = int(((i + 1) / len(all_videos_df)) * 100)
+                        status_text.text(f"Processing {i + 1}/{len(all_videos_df)} videos. Title : {all_videos_df.iloc[i]['title'][:50]}")
+                        progress_bar.progress(percent_complete)
+                        tasks.append(agent_service.run_summary_pipeline(video_id, 4))
+                    results = await asyncio.gather(*tasks)
+                    return results
+                
+                
+                with st.spinner("🔄 Generating summaries... This may take a while."):
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    four_line_summaries = loop.run_until_complete(generate_all_summaries())
+                    loop.close()
 
-                        # status_text.text(f"Processing {i+1}/{total}: {row['title'][:50]}...")
-                        status_text.text(f"Processing {i + 1}/{total} videos. Title : {row['title'][:50]}")
-
-                        print(f"Fetching fourline Summary for video id : {video_id}")
-                        summary = agent_service.run_summary_pipeline(video_id, 4)
-                        four_line_summaries.append(summary)
-
-                        print(f"Completed the Four line summary for video id : {video_id}")
-
-                        # two_line_summary = agent_service.run_summary_pipeline(video_id=video_id, recent_summary=summary, value=2)
-                        # two_line_summaries.append(two_line_summary)
-
-                        # sentiment = agent_service.run_summary_pipeline(video_id=video_id, recent_summary=summary, value=1)
-                        # sentiments.append(sentiment)
-
+                    for i in range(len(all_videos_df)):
+                        percent_complete = int(((i + 1) / len(all_videos_df)) * 100)
+                        status_text.text(f"Processing {i + 1}/{len(all_videos_df)} videos. Title : {all_videos_df.iloc[i]['title'][:50]}")
                         progress_bar.progress(percent_complete)
 
                     all_videos_df["four_line_summary"] = four_line_summaries
-                    # all_videos_df["two_line_summary"] = two_line_summaries
-                    # all_videos_df["sentiment"] = sentiments
                     st.session_state["download_df"] = all_videos_df
+
+                # with st.spinner("🔄 Generating summaries... This may take a while."):
+                #     total = len(all_videos_df)
+
+                #     for i, row in all_videos_df.iterrows():
+                #         video_id = row["video_id"]
+                #         percent_complete = int(((i + 1) / total) * 100)
+
+                #         # status_text.text(f"Processing {i+1}/{total}: {row['title'][:50]}...")
+                #         status_text.text(f"Processing {i + 1}/{total} videos. Title : {row['title'][:50]}")
+
+                #         print(f"Fetching fourline Summary for video id : {video_id}")
+                #         summary = agent_service.run_summary_pipeline(video_id, 4)
+                #         four_line_summaries.append(summary)
+
+                #         print(f"Completed the Four line summary for video id : {video_id}")
+
+                #         # two_line_summary = agent_service.run_summary_pipeline(video_id=video_id, recent_summary=summary, value=2)
+                #         # two_line_summaries.append(two_line_summary)
+
+                #         # sentiment = agent_service.run_summary_pipeline(video_id=video_id, recent_summary=summary, value=1)
+                #         # sentiments.append(sentiment)
+
+                #         progress_bar.progress(percent_complete)
+
+                #     all_videos_df["four_line_summary"] = four_line_summaries
+                #     # all_videos_df["two_line_summary"] = two_line_summaries
+                #     # all_videos_df["sentiment"] = sentiments
+                #     st.session_state["download_df"] = all_videos_df
 
             if 'download_df' in st.session_state:   
                 results_df = st.session_state['download_df']

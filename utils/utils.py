@@ -12,6 +12,9 @@ import http.client
 from langchain_groq import ChatGroq
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import HumanMessage, SystemMessage
+import asyncio
+import httpx
+import pytz 
 from utils.constants import MODEL_NAME, CHUNK_SIZE, CHUNK_OVERLAP, \
     CHUNK_SYSTEM_MESSAGES, CHUNK_USER_PROMPTS, FINAL_SYSTEM_MESSAGES, FINAL_USER_PROMPTS, \
     ULTRA_CONCISE_SYSTEM_MESSAGES, ULTRA_CONCISE_USER_PROMPTS, SENTIMENT_SYSTEM_MESSAGE, SENTIMENT_USER_PROMPT
@@ -84,10 +87,16 @@ class StreamlitServiceClass:
                     col1, col2 = st.columns([3, 1])
 
                     with col1:
+                        ist = pytz.timezone('Asia/Kolkata')
+                        published_at_ist = video['published_at'].tz_convert(ist)
                         st.markdown(f"""
                         **{video['title']}** \n
-                        🕒 **Published at:** *{video['published_at'].strftime('%I:%M %p')}* 
-                        """) #  - %Y-%m-%d
+                        🕒 **Published at:** *{published_at_ist.strftime('%I:%M %p, %d-%b-%Y')}* 
+                        """)
+                        # st.markdown(f"""
+                        # **{video['title']}** \n
+                        # 🕒 **Published at:** *{video['published_at'].strftime('%I:%M %p')}* 
+                        # """) #  - %Y-%m-%d
 
                         if 'four_line_summary' in video and pd.notna(video['four_line_summary']):
                             st.markdown(f"📝 **Summary:** {video['four_line_summary']}")
@@ -123,25 +132,25 @@ class AgentServiceClass:
             )
             self.initialized = True
 
-    def run_summary_pipeline(self, video_id, value : int, recent_summary: str = None):
+    async def run_summary_pipeline(self, video_id, value : int, recent_summary: str = None):
         """Process a single YouTube video and return summary or error message."""
         try:
 
-            transcript = self.youtube_service.get_transcript_rapidapi(video_id)
+            transcript = await self.youtube_service.get_transcript_rapidapi(video_id)
             if not transcript:
                 return f"Transcript not available for video id {video_id}"
 
-            if value == 4:
-                summary = self.summarize_transcript_four_lines(transcript)
-                return summary
+            # if value == 4:
+            #     summary = self.summarize_transcript_four_lines(transcript)
+            #     return summary
             
-            elif value == 2:
-                summary = self.summarize_two_line_summary(recent_summary)
-                return summary
+            # elif value == 2:
+            #     summary = self.summarize_two_line_summary(recent_summary)
+            #     return summary
             
-            elif value == 1:
-                sentiment = self.analyze_the_sentiment(recent_summary)
-                return sentiment
+            # elif value == 1:
+            #     sentiment = self.analyze_the_sentiment(recent_summary)
+            #     return sentiment
             
             
             return "Summary is Not Generated"
@@ -149,7 +158,20 @@ class AgentServiceClass:
         except Exception as e:
             return f"Error occured while fetching the transcription"
         
-    def analyze_the_sentiment(self, summary):
+    async def llm_invoke(self, system_prompt, user_prompt):
+        loop = asyncio.get_event_loop()
+
+        final_prompt = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
+        ]
+        response = await loop.run_in_executor(None, lambda : self.llm.invoke(final_prompt))
+
+        final_summary = response.content.strip()
+        return self.remove_think_tags(final_summary)
+
+
+    async def analyze_the_sentiment(self, summary):
         final_messages = [
             SystemMessage(content=SENTIMENT_SYSTEM_MESSAGE.get('english')),
             HumanMessage(content=SENTIMENT_USER_PROMPT.get('english').format(summary=summary))
@@ -160,7 +182,7 @@ class AgentServiceClass:
 
         return self.remove_think_tags(final_summary)
         
-    def summarize_transcript_four_lines(self, transcript):
+    async def summarize_transcript_four_lines(self, transcript):
         """Generate summary using Groq's DeepSeek model with chunking for large transcripts."""
         chunks = self.text_splitter.split_text(transcript)
 
@@ -195,7 +217,7 @@ class AgentServiceClass:
         
         return "Summary is Not Generated for this Video"
     
-    def summarize_two_line_summary(self, summary):
+    async def summarize_two_line_summary(self, summary):
         """Generate summary using Groq's DeepSeek model with chunking for large transcripts."""
 
         final_messages = [
@@ -209,7 +231,7 @@ class AgentServiceClass:
         return self.remove_think_tags(final_summary)
         
 
-    def remove_think_tags(self, text):
+    async def remove_think_tags(self, text):
         """Remove thinking tags from text."""
         pattern = r'<think>.*?</think>'
         cleaned_text = re.sub(pattern, '', text, flags=re.DOTALL)
@@ -240,7 +262,7 @@ class YouTubeServiceClass:
             self.rapidapi_base_url = os.getenv("RAPIDAPI_BASE_URL")
             self.initialized = True
 
-    def get_recent_videos_and_stats_by_channels_v1(self, channel_ids: List[str], hours: int = 24):
+    async def get_recent_videos_and_stats_by_channels(self, channel_ids: List[str], hours: int = 24):
         """
         Fetch videos uploaded in the last `hours` from multiple YouTube channels.
 
@@ -252,75 +274,9 @@ class YouTubeServiceClass:
             List[dict]: List of video metadata dictionaries.
         """
         published_after = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
-
-        all_videos = []
-        channel_stats = defaultdict(lambda: {
-            "total_channels": 0,
-            "total_videos": 0,
-        })
-
-        for channel_id in channel_ids:
-            params = {
-                'part': 'snippet',
-                'channelId': channel_id,
-                'publishedAfter': published_after,
-                'type': 'video',
-                'order': 'date',
-                'maxResults': 1,
-                'key': self.youtube_api_key
-            }
-
-            try:
-                response = requests.get(self.base_url, params=params)
-                response.raise_for_status()
-                data = response.json()
-
-                for item in data.get('items', []):
-                    video = {
-                        'channel_id': channel_id,
-                        'channel': item['snippet']['channelTitle'],
-                        'video_id': item['id']['videoId'],
-                        'title': item['snippet']['title'],
-                        'published_at': pd.to_datetime(item['snippet']['publishedAt']),
-                        'video_url': f"{self.youtube_base_video_url}{item['id']['videoId']}"
-                    }
-
-                    channel_stats[video["channel"]]["total_videos"] += 1
-                    all_videos.append(video)
-
-            except requests.exceptions.RequestException as e:
-                print(f"[ERROR] API Request failed for {channel_id}: {e}")
-                st.write(str(e))
-                continue
-            except KeyError as e:
-                print(f"[ERROR] Key error for {channel_id}: {e}")
-                st.write(str(e))
-                continue
-
-        global_stats = {
-            "total_channels": len(channel_stats),
-            "total_videos": sum(c["total_videos"] for c in channel_stats.values())
-        }
-
-        return pd.DataFrame(all_videos), dict(channel_stats), global_stats
-    
-
-    def get_recent_videos_and_stats_by_channels(self, channel_ids: List[str], hours: int = 24):
-        """
-        Optimized YouTube API version to fetch recent videos using 1 + N quota units.
-
-        Args:
-            channel_ids (List[str]): List of YouTube channel IDs.
-            hours (int): Number of past hours to search.
-
-        Returns:
-            Tuple[pd.DataFrame, dict, dict]: video dataframe, per-channel stats, global stats.
-        """
-        published_after = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
         all_videos = []
         channel_stats = defaultdict(lambda: {"total_videos": 0})
 
-        # Step 1: Fetch all channels' upload playlist IDs in a single call (1 quota unit)
         try:
             channels_url = "https://www.googleapis.com/youtube/v3/channels"
             channel_id_str = ",".join(channel_ids)
@@ -329,21 +285,21 @@ class YouTubeServiceClass:
                 "id": channel_id_str,
                 "key": self.youtube_api_key
             }
-
-            resp = requests.get(channels_url, params=params)
-            resp.raise_for_status()
-            channel_data = resp.json()
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(channels_url, params=params)
+                resp.raise_for_status()
+                channel_data = resp.json()
         except Exception as e:
             print(f"[ERROR] Failed to fetch channel details: {e}")
             return pd.DataFrame(), {}, {}
 
-        uploads_map = {}  # channel_id -> uploads playlist id
+        uploads_map = {}
         for item in channel_data.get("items", []):
             uploads_map[item["id"]] = item["contentDetails"]["relatedPlaylists"]["uploads"]
 
-        # Step 2: Fetch latest video from each uploads playlist (1 quota unit per playlistItems.list call)
-        for channel_id, uploads_playlist_id in uploads_map.items():
-            try:
+        async with httpx.AsyncClient() as client:
+            tasks = []
+            for channel_id, uploads_playlist_id in uploads_map.items():
                 playlist_url = "https://www.googleapis.com/youtube/v3/playlistItems"
                 params = {
                     "part": "snippet",
@@ -351,37 +307,38 @@ class YouTubeServiceClass:
                     "maxResults": 1,
                     "key": self.youtube_api_key
                 }
-
-                resp = requests.get(playlist_url, params=params)
-                resp.raise_for_status()
-                playlist_data = resp.json()
-
-                for item in playlist_data.get("items", []):
-                    published_at = pd.to_datetime(item["snippet"]["publishedAt"])
-                    if published_at >= pd.to_datetime(published_after):
-                        video = {
-                            'channel_id': channel_id,
-                            'channel': item["snippet"]["channelTitle"],
-                            'video_id': item["snippet"]["resourceId"]["videoId"],
-                            'title': item["snippet"]["title"],
-                            'published_at': published_at,
-                            'video_url': f"{self.youtube_base_video_url}{item['snippet']['resourceId']['videoId']}"
-                        }
-
-                        all_videos.append(video)
-                        channel_stats[video["channel"]]["total_videos"] += 1
-            except Exception as e:
-                print(f"[ERROR] Failed to fetch playlist items for {channel_id}: {e}")
+                tasks.append(client.get(playlist_url, params=params))
+            responses = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        for idx, resp in enumerate(responses):
+            if isinstance(resp, Exception):
+                print(f"[ERROR] Failed to fetch playlist items: {resp}")
                 continue
+            playlist_data = resp.json()
+            for item in playlist_data.get("items", []):
+                published_at_utc = pd.to_datetime(item["snippet"]["publishedAt"]).tz_convert("UTC")
+                published_after_utc = pd.to_datetime(published_after).tz_convert("UTC")
+                if published_at_utc >= published_after_utc:
+                    video = {
+                        'channel_id': list(uploads_map.keys())[idx],
+                        'channel': item["snippet"]["channelTitle"],
+                        'video_id': item["snippet"]["resourceId"]["videoId"],
+                        'title': item["snippet"]["title"],
+                        'published_at': published_at_utc,
+                        'video_url': f"{self.youtube_base_video_url}{item['snippet']['resourceId']['videoId']}"
+                    }
+                    all_videos.append(video)
+                    channel_stats[video["channel"]]["total_videos"] += 1
 
         global_stats = {
             "total_channels": len(channel_stats),
             "total_videos": sum(c["total_videos"] for c in channel_stats.values())
         }
 
+        all_videos.sort(key=lambda x: x['published_at'], reverse=True)
         return pd.DataFrame(all_videos), dict(channel_stats), global_stats
     
-    def get_transcript_rapidapi(self, video_id):
+    async def get_transcript_rapidapi_v1(self, video_id):
         
         try:
             conn = http.client.HTTPSConnection(self.rapidapi_host)
@@ -406,6 +363,26 @@ class YouTubeServiceClass:
 
             return full_transcript.strip() if full_transcript.strip() else None
         
+        except Exception as e:
+            print(f"An exception occurred in get_transcript_rapidapi : {str(e)}")
+            st.write(str(e))
+            return None
+        
+    async def get_transcript_rapidapi(self, video_id):
+        try:
+            url = f"https://{self.rapidapi_host}{self.rapidapi_base_url}{video_id}"
+            headers = {
+                'x-rapidapi-key': self.rapidapi_key,
+                'x-rapidapi-host': self.rapidapi_host
+            }
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(url, headers=headers)
+                resp.raise_for_status()
+                json_data = resp.json()
+            transcript_items = json_data.get("transcript", [])
+            full_transcript = " ".join(item.get("text", "") for item in transcript_items)
+            print("FUll Transcript : ", full_transcript)
+            return full_transcript.strip() if full_transcript.strip() else None
         except Exception as e:
             print(f"An exception occurred in get_transcript_rapidapi : {str(e)}")
             st.write(str(e))
