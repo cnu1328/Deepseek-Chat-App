@@ -75,22 +75,85 @@ def main():
     
     # Time period selection
     st.sidebar.subheader("📅 Time Period")
-    time_periods = [
-        ("Last 3 months", 90),
-        ("Last 1 month", 30),
-        ("Last 15 days", 15),
-        ("Last 7 days", 7),
-        ("Last 24 hours", 1),
-        ("Last 12 hours", 0.5),
-        ("Last 6 hours", 0.25),
-        ("Last 1 hour", 0.042)  # 1/24 of a day
-    ]
     
-    selected_period = st.sidebar.selectbox(
-        "Select a time period to search:",
-        options=[period[0] for period in time_periods],
-        index=0  
+    # Add option to choose between predefined periods or custom range
+    time_mode = st.sidebar.radio(
+        "Select time filter mode:",
+        options=["Predefined Periods", "Custom Date-Time Range"],
+        index=0
     )
+    
+    selected_period = None
+    custom_start_time = None
+    custom_end_time = None
+    
+    if time_mode == "Predefined Periods":
+        time_periods = [
+            ("Last 3 months", 90),
+            ("Last 1 month", 30),
+            ("Last 15 days", 15),
+            ("Last 7 days", 7),
+            ("Last 24 hours", 1),
+            ("Last 12 hours", 0.5),
+            ("Last 6 hours", 0.25),
+            ("Last 1 hour", 0.042)  # 1/24 of a day
+        ]
+        
+        selected_period = st.sidebar.selectbox(
+            "Select a time period to search:",
+            options=[period[0] for period in time_periods],
+            index=0  
+        )
+    else:
+        st.sidebar.markdown("**Select Date-Time Range:**")
+        
+        # Get current time in IST
+        ist_tz = pytz.timezone('Asia/Kolkata')
+        now_ist = datetime.now(ist_tz)
+        
+        # Set default times to yesterday 10:30 AM to today 10:30 AM
+        default_time = datetime.strptime("10:30", "%H:%M").time()
+        yesterday = now_ist.date() - timedelta(days=1)
+        today = now_ist.date()
+        
+        # Date inputs
+        col1, col2 = st.sidebar.columns(2)
+        with col1:
+            start_date = st.date_input(
+                "From Date",
+                value=yesterday,
+                max_value=now_ist.date()
+            )
+        with col2:
+            end_date = st.date_input(
+                "To Date",
+                value=today,
+                max_value=now_ist.date()
+            )
+        
+        # Time inputs
+        col3, col4 = st.sidebar.columns(2)
+        with col3:
+            start_time = st.time_input(
+                "From Time",
+                value=default_time
+            )
+        with col4:
+            end_time = st.time_input(
+                "To Time",
+                value=default_time
+            )
+        
+        # Combine date and time
+        custom_start_time = ist_tz.localize(datetime.combine(start_date, start_time))
+        custom_end_time = ist_tz.localize(datetime.combine(end_date, end_time))
+        
+        # Validate date range
+        if custom_start_time >= custom_end_time:
+            st.sidebar.error("⚠️ Start date-time must be before end date-time!")
+        else:
+            duration = custom_end_time - custom_start_time
+            st.sidebar.info(f"📊 Duration: {duration.days} days, {duration.seconds // 3600} hours")
 
     search_query = st.sidebar.text_input(
         "Enter hashtag or search query:",
@@ -104,37 +167,15 @@ def main():
     )
         
     
-    # Main interface
-    # col1, col2 = st.columns([2, 1])
-    
-    # with col1:
-    #     st.subheader("🔍 Search Parameters")
-        
-        
-    
-    # with col2:
-    #     st.subheader("📊 Quick Stats")
-    #     if st.session_state.search_results:
-    #         total_videos = len(st.session_state.search_results)
-    #         st.metric("Total Videos Found", total_videos)
-            
-    #         if total_videos > 0:
-    #             latest_video = max(st.session_state.search_results, 
-    #                              key=lambda x: x['published_date'])
-    #             st.metric("Latest Video", 
-    #                      latest_video['published_date'].strftime("%Y-%m-%d"))
-    
     # Search execution
-    if search_button and selected_period and not st.session_state.is_searching:
+    if search_button and not st.session_state.is_searching:
 
         if not search_query:
             st.error(f"Please enter Hashtag or Query")
+        elif time_mode == "Custom Date-Time Range" and custom_start_time >= custom_end_time:
+            st.error("⚠️ Invalid date-time range! Start must be before end.")
         else:
             st.session_state.is_searching = True
-            
-            # Convert selected periods to days
-            period_mapping = {period[0]: period[1] for period in time_periods}
-            selected_days = period_mapping[selected_period]
             
             # Progress tracking
             progress_bar = st.progress(0)
@@ -144,17 +185,36 @@ def main():
                 # Initialize searcher
                 searcher = YouTubeSearcher()
                 
-                # Run async search
-                results = asyncio.run(
-                    searcher.search_videos_async(
-                        query=search_query,
-                        time_periods_days=[selected_days],
-                        progress_callback=lambda p, s: (
-                            progress_bar.progress(p),
-                            status_text.text(s)
+                # Determine search parameters based on mode
+                if time_mode == "Predefined Periods":
+                    # Convert selected periods to days
+                    period_mapping = {period[0]: period[1] for period in time_periods}
+                    selected_days = period_mapping[selected_period]
+                    
+                    # Run async search with predefined period
+                    results = asyncio.run(
+                        searcher.search_videos_async(
+                            query=search_query,
+                            time_periods_days=[selected_days],
+                            progress_callback=lambda p, s: (
+                                progress_bar.progress(p),
+                                status_text.text(s)
+                            )
                         )
                     )
-                )
+                else:
+                    # Run async search with custom date-time range
+                    results = asyncio.run(
+                        searcher.search_videos_async(
+                            query=search_query,
+                            custom_start_time=custom_start_time,
+                            custom_end_time=custom_end_time,
+                            progress_callback=lambda p, s: (
+                                progress_bar.progress(p),
+                                status_text.text(s)
+                            )
+                        )
+                    )
                 
                 st.session_state.search_results = results
                 st.session_state.is_searching = False
@@ -174,89 +234,6 @@ def main():
         
         # Convert to DataFrame
         display_df = pd.DataFrame(st.session_state.search_results)
-        
-        # # Add filters
-        # col1, col2, col3 = st.columns(3)
-        
-        # with col1:
-        #     # Channel filter
-        #     channels = sorted(df['channel_name'].unique())
-        #     selected_channels = st.multiselect(
-        #         "Filter by channels:",
-        #         options=channels,
-        #         default=channels[:10] if len(channels) > 10 else channels
-        #     )
-        
-        # with col2:
-        #     # Date range filter
-        #     min_date = df['published_date'].min().date()
-        #     max_date = df['published_date'].max().date()
-            
-        #     date_range = st.date_input(
-        #         "Date range:",
-        #         value=(min_date, max_date),
-        #         min_value=min_date,
-        #         max_value=max_date
-        #     )
-        
-        # with col3:
-        #     st.write("") # Spacer
-        #     st.write("") # Spacer
-            
-        #     # Export button
-        #     if st.button("📥 Download Excel", use_container_width=True):
-        #         # Filter data
-        #         filtered_df = df[df['channel_name'].isin(selected_channels)]
-                
-        #         if len(date_range) == 2:
-        #             start_date, end_date = date_range
-        #             filtered_df = filtered_df[
-        #                 (filtered_df['published_date'].dt.date >= start_date) &
-        #                 (filtered_df['published_date'].dt.date <= end_date)
-        #             ]
-                
-        #         # Create Excel file
-        #         excel_buffer = io.BytesIO()
-        #         with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-        #             # Format the DataFrame for Excel
-        #             export_df = filtered_df.copy()
-        #             export_df['published_date'] = export_df['published_date'].dt.strftime('%Y-%m-%d %H:%M:%S')
-                    
-        #             export_df.to_excel(writer, index=False, sheet_name='YouTube Videos')
-                    
-        #             # Auto-adjust column widths
-        #             worksheet = writer.sheets['YouTube Videos']
-        #             for column in worksheet.columns:
-        #                 max_length = 0
-        #                 column = [cell for cell in column]
-        #                 for cell in column:
-        #                     try:
-        #                         if len(str(cell.value)) > max_length:
-        #                             max_length = len(str(cell.value))
-        #                     except:
-        #                         pass
-        #                 adjusted_width = min(max_length + 2, 50)
-        #                 worksheet.column_dimensions[column[0].column_letter].width = adjusted_width
-                
-        #         excel_buffer.seek(0)
-                
-        #         # Download button
-        #         st.download_button(
-        #             label="📁 Download Excel File",
-        #             data=excel_buffer.getvalue(),
-        #             file_name=f"youtube_videos_{search_query.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-        #             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        #         )
-        
-        # Apply filters to display
-        # display_df = df[df['channel_name'].isin(selected_channels)]
-        
-        # if len(date_range) == 2:
-        #     start_date, end_date = date_range
-        #     display_df = display_df[
-        #         (display_df['published_date'].dt.date >= start_date) &
-        #         (display_df['published_date'].dt.date <= end_date)
-        #     ]
         
         # Sort by published date (newest first)
         display_df = display_df.sort_values('published_date', ascending=False)
@@ -293,10 +270,12 @@ def main():
         excel_buffer.seek(0)
         
         # Download button
-        sanitized_period = selected_period.replace(" ", "_")
-
-        # Build the filename with search query, period, and timestamp
-        file_name = f"youtube_videos_{search_query.replace(' ', '_')}_{sanitized_period}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        if time_mode == "Predefined Periods":
+            sanitized_period = selected_period.replace(" ", "_")
+            file_name = f"youtube_videos_{search_query.replace(' ', '_')}_{sanitized_period}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        else:
+            date_range = f"{custom_start_time.strftime('%Y%m%d')}_{custom_end_time.strftime('%Y%m%d')}"
+            file_name = f"youtube_videos_{search_query.replace(' ', '_')}_custom_{date_range}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
 
         st.download_button(
             label="📁 Download Excel File",

@@ -69,7 +69,9 @@ class YouTubeSearcher:
         self, 
         session: aiohttp.ClientSession,
         query: str, 
-        days: float
+        days: float = None,
+        published_after: str = None,
+        published_before: str = None
     ) -> List[Dict]:
         """
         Search videos for a specific time period.
@@ -77,8 +79,9 @@ class YouTubeSearcher:
         Args:
             session: aiohttp session for making requests
             query: Search query/hashtag
-            days: Time period in days to search
-            max_results: Maximum number of results to fetch
+            days: Time period in days to search (optional if published_after is provided)
+            published_after: RFC 3339 timestamp for start of search range (optional)
+            published_before: RFC 3339 timestamp for end of search range (optional)
             
         Returns:
             List of video information dictionaries
@@ -87,9 +90,11 @@ class YouTubeSearcher:
         page_token = None
         results_per_request = 50  # Maximum allowed by YouTube API
         
-        published_after = self.get_time_filter(days)
+        # Determine time filter
+        if published_after is None and days is not None:
+            published_after = self.get_time_filter(days)
         
-        while len(videos) < 500:
+        while len(videos) < 1500:  # Increased from 500 to 1500
             try:
                 # Prepare request parameters
                 params = {
@@ -97,10 +102,15 @@ class YouTubeSearcher:
                     'q': query,
                     'type': 'video',
                     'order': 'date',  # Order by upload date
-                    'publishedAfter': published_after,
                     'maxResults': 50,
                     'key': self.get_next_api_key()
                 }
+                
+                # Add time filters if provided
+                if published_after:
+                    params['publishedAfter'] = published_after
+                if published_before:
+                    params['publishedBefore'] = published_before
                 
                 if page_token:
                     params['pageToken'] = page_token
@@ -142,8 +152,6 @@ class YouTubeSearcher:
                 break
                 
             # Small delay to be respectful to the API
-            await asyncio.sleep(0.1)
-        
         return videos
     
     def extract_video_info(self, item: Dict) -> Optional[Dict]:
@@ -190,23 +198,25 @@ class YouTubeSearcher:
     async def search_videos_async(
         self, 
         query: str, 
-        time_periods_days: List[float],
+        time_periods_days: List[float] = None,
+        custom_start_time: datetime = None,
+        custom_end_time: datetime = None,
         progress_callback: Optional[Callable] = None
     ) -> List[Dict]:
         """
-        Asynchronously search for videos across multiple time periods.
+        Asynchronously search for videos across multiple time periods or custom date range.
         
         Args:
             query: Search query/hashtag
-            time_periods_days: List of time periods in days to search
-            max_results_per_period: Maximum results per time period
+            time_periods_days: List of time periods in days to search (optional)
+            custom_start_time: Custom start datetime for search range (optional)
+            custom_end_time: Custom end datetime for search range (optional)
             progress_callback: Optional callback for progress updates
             
         Returns:
             Consolidated list of unique videos
         """
         all_videos = []
-        total_periods = len(time_periods_days)
         
         # Create aiohttp session with optimized settings
         timeout = aiohttp.ClientTimeout(total=30)
@@ -217,27 +227,58 @@ class YouTubeSearcher:
             connector=connector
         ) as session:
             
-            for i, days in enumerate(time_periods_days):
+            # Handle custom date-time range
+            if custom_start_time and custom_end_time:
                 if progress_callback:
-                    progress = (i / total_periods)
-                    period_name = self.get_period_name(days)
-                    progress_callback(progress, f"Searching videos from {period_name}...")
+                    progress_callback(0.0, f"Searching videos from {custom_start_time.strftime('%Y-%m-%d %H:%M')} to {custom_end_time.strftime('%Y-%m-%d %H:%M')}...")
                 
                 try:
+                    # Convert datetime to RFC 3339 format
+                    published_after = custom_start_time.isoformat()
+                    published_before = custom_end_time.isoformat()
+                    
                     period_videos = await self.search_videos_for_period(
-                        session, query, days
+                        session, 
+                        query, 
+                        published_after=published_after,
+                        published_before=published_before
                     )
                     all_videos.extend(period_videos)
                     
                     if progress_callback:
                         progress_callback(
-                            (i + 1) / total_periods,
-                            f"Found {len(period_videos)} videos from {period_name}"
+                            1.0,
+                            f"Found {len(period_videos)} videos in custom date range"
                         )
                     
                 except Exception as e:
-                    print(f"Error searching for period {days} days: {str(e)}")
-                    continue
+                    print(f"Error searching custom date range: {str(e)}")
+            
+            # Handle predefined time periods
+            elif time_periods_days:
+                total_periods = len(time_periods_days)
+                
+                for i, days in enumerate(time_periods_days):
+                    if progress_callback:
+                        progress = (i / total_periods)
+                        period_name = self.get_period_name(days)
+                        progress_callback(progress, f"Searching videos from {period_name}...")
+                    
+                    try:
+                        period_videos = await self.search_videos_for_period(
+                            session, query, days=days
+                        )
+                        all_videos.extend(period_videos)
+                        
+                        if progress_callback:
+                            progress_callback(
+                                (i + 1) / total_periods,
+                                f"Found {len(period_videos)} videos from {period_name}"
+                            )
+                        
+                    except Exception as e:
+                        print(f"Error searching for period {days} days: {str(e)}")
+                        continue
         
         # Remove duplicates based on video_id
         unique_videos = {}
