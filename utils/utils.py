@@ -71,7 +71,8 @@ class YouTubeSearcher:
         query: str, 
         days: float = None,
         published_after: str = None,
-        published_before: str = None
+        published_before: str = None,
+        api_key: str = None
     ) -> List[Dict]:
         """
         Search videos for a specific time period.
@@ -97,13 +98,16 @@ class YouTubeSearcher:
         while len(videos) < 1500:  # Increased from 500 to 1500
             try:
                 # Prepare request parameters
+                # Use provided API key or get next one from rotation
+                current_api_key = api_key if api_key else self.get_next_api_key()
+                
                 params = {
                     'part': 'snippet',
                     'q': query,
                     'type': 'video',
                     'order': 'date',  # Order by upload date
                     'maxResults': 50,
-                    'key': self.get_next_api_key()
+                    'key': current_api_key
                 }
                 
                 # Add time filters if provided
@@ -151,7 +155,10 @@ class YouTubeSearcher:
                 print(f"Error in search request: {str(e)}")
                 break
                 
-            # Small delay to be respectful to the API
+            # Small delay between pagination requests for consistency
+            if page_token:
+                await asyncio.sleep(0.5)
+        
         return videos
     
     def extract_video_info(self, item: Dict) -> Optional[Dict]:
@@ -218,6 +225,9 @@ class YouTubeSearcher:
         """
         all_videos = []
         
+        # Select a consistent API key for this entire search session
+        session_api_key = self.get_next_api_key()
+        
         # Create aiohttp session with optimized settings
         timeout = aiohttp.ClientTimeout(total=30)
         connector = aiohttp.TCPConnector(limit=10, limit_per_host=5)
@@ -241,7 +251,8 @@ class YouTubeSearcher:
                         session, 
                         query, 
                         published_after=published_after,
-                        published_before=published_before
+                        published_before=published_before,
+                        api_key=session_api_key
                     )
                     all_videos.extend(period_videos)
                     
@@ -266,7 +277,7 @@ class YouTubeSearcher:
                     
                     try:
                         period_videos = await self.search_videos_for_period(
-                            session, query, days=days
+                            session, query, days=days, api_key=session_api_key
                         )
                         all_videos.extend(period_videos)
                         
