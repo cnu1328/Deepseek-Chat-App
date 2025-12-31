@@ -116,18 +116,22 @@ def main():
         yesterday = now_ist.date() - timedelta(days=1)
         today = now_ist.date()
         
-        # Date inputs
+        # Date inputs (YouTube started on February 14, 2006)
+        youtube_start_date = datetime(2006, 2, 14).date()
+        
         col1, col2 = st.sidebar.columns(2)
         with col1:
             start_date = st.date_input(
                 "From Date",
                 value=yesterday,
+                min_value=youtube_start_date,
                 max_value=now_ist.date()
             )
         with col2:
             end_date = st.date_input(
                 "To Date",
                 value=today,
+                min_value=youtube_start_date,
                 max_value=now_ist.date()
             )
         
