@@ -376,7 +376,8 @@ st.title("📄 Voter Text to Excel Converter")
 st.markdown('<p class="subtitle">Paste copied text from voter PDF and convert to Excel format</p>', unsafe_allow_html=True)
 
 with st.sidebar:
-    api_key = os.getenv("OPENAI_API_KEY", "")
+    # api_key = os.getenv("OPENAI_API_KEY", "")
+    api_key = st.secrets["OPENAI_API_KEY"]
     model_choice = 'gpt-4o'
     st.header("📖 How to Use")
     st.markdown("""
