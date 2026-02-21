@@ -73,19 +73,38 @@ def clean_text(text):
 def parse_voter_data(text):
     cleaned_text = clean_text(text)
     
-    voter_id_pattern = re.compile(r'ఓటరు\s*ఐడి\s*([A-Z]{3}\d{7})')
+    # voter_id_pattern = re.compile(r'ఓటరు\s*ఐడి\s*([A-Z]{3}\d{7})')
+    # voter_id_pattern = re.compile(r'ఓటరు\s*ఐడి\.?\s*([A-Z]{3}\d{7})') ## ఓటరు ఐడి. XTM0650672
+
+    voter_id_pattern = re.compile(r'EPIC\s*No\.?\s*([A-Z]{3}\d{7})') ## English
     id_matches = list(voter_id_pattern.finditer(cleaned_text))
     
     seen_ids = set()
     voters = []
     serial = 0
     
-    ac_ps_serial_re = re.compile(r'ఎ\.సి\s*-పి\.ఎస్\s*-\s*వరుస\s*సంఖ్య\.?\s*:\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)')
-    name_re = re.compile(r'పేరు\s*:\s*(.+?)(?=\n|తండ్రి|భర్త|వయసు)')
-    father_re = re.compile(r'తండ్రి\s*పేరు\s*:\s*(.*?)(?=\n|వయసు)')
-    husband_re = re.compile(r'భర్త\s*పేరు\s*:\s*(.*?)(?=\n|వయసు)')
-    age_gender_re = re.compile(r'వయసు\s*:\s*(\d{1,3})\s*లింగ\s*:\s*:?\s*([MF])')
-    door_re = re.compile(r'డోర్\s*నెం\s*\.?\s*:\s*(.+?)(?=\n|ఓటరు)')
+    # ac_ps_serial_re = re.compile(r'ఎ\.సి\s*-పి\.ఎస్\s*-\s*వరుస\s*సంఖ్య\.?\s*:\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)')
+    ac_ps_serial_re = re.compile(r'A\.?C\.?\s*No\.?-?\s*PS\.?\s*No\.?-?\s*SL\.?\s*No\.?\s*:\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)', re.IGNORECASE) # English AC No- PS No- SL No: 45- 12- 003
+    
+    # name_re = re.compile(r'పేరు\s*:\s*(.+?)(?=\n|తండ్రి|భర్త|వయసు)')
+    name_re = re.compile(r'Name\s*:\s*(.+?)(?=\nFather\s*Name|\nHusband|\nAge)',re.IGNORECASE) # English
+
+    # father_re = re.compile(r'తండ్రి\s*పేరు\s*:\s*(.*?)(?=\n|వయసు)')
+    # father_re = re.compile(r'Father\s*Name\s*:\s*(.+?)(?=\nAge)',re.IGNORECASE) # English
+    # father_re = re.compile(r'Father\s*Name\s*:\s*(.+?)(?=\nAge)', re.IGNORECASE | re.DOTALL) # English
+    father_re = re.compile(r'Father\s*Name\s*:\s*(.+?)(?=\nAge|\nSex|\nDoor|\nEPIC)',re.IGNORECASE | re.DOTALL)
+
+
+    # husband_re = re.compile(r'భర్త\s*పేరు\s*:\s*(.*?)(?=\n|వయసు)')
+    husband_re = re.compile(r'Husband\s*Name\s*:?\s*(.+?)(?=\nAge)',re.IGNORECASE | re.DOTALL) #English
+
+    # age_gender_re = re.compile(r'వయసు\s*:\s*(\d{1,3})\s*లింగ\s*:\s*:?\s*([MF])')
+    age_gender_re = re.compile(r'Age\s*:\s*(\d{1,3})\s*Sex\s*:\s*:?\s*([MF])', re.IGNORECASE) # English
+
+    # door_re = re.compile(r'డోర్\s*నెం\s*\.?\s*:\s*(.+?)(?=\n|ఓటరు)')
+    door_re = re.compile(r'Door\s*No\.?\s*:\s*(.+?)(?=\nEPIC)',re.IGNORECASE) # English
+
+    mother_re = re.compile(r'Mother\s*Name\s*:?\s*(.+?)(?=\nAge|\nSex|\nDoor|\nEPIC)',re.IGNORECASE | re.DOTALL) #English
     
     for i, m in enumerate(id_matches):
         voter_id = m.group(1)
@@ -114,10 +133,14 @@ def parse_voter_data(text):
         
         father_match = father_re.search(block)
         husband_match = husband_re.search(block)
+        mother_match = mother_re.search(block)
+
         if father_match:
             relation = father_match.group(1).strip()
         elif husband_match:
             relation = husband_match.group(1).strip()
+        elif mother_match:
+            relation = mother_match.group(1).strip()
         else:
             relation = ''
         relation = re.sub(r'\s+', ' ', relation)
