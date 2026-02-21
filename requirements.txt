@@ -10,3 +10,4 @@ pandas
 PyPDF2 
 xlsxwriter 
 openpyxl
+openai
