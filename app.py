@@ -376,8 +376,17 @@ st.title("📄 Voter Text to Excel Converter")
 st.markdown('<p class="subtitle">Paste copied text from voter PDF and convert to Excel format</p>', unsafe_allow_html=True)
 
 with st.sidebar:
-    # api_key = os.getenv("OPENAI_API_KEY", "")
-    api_key = st.secrets["OPENAI_API_KEY"]
+    try:
+        api_key = st.secrets["OPENAI_API_KEY"]
+    except KeyError:
+        st.error("❌ OPENAI_API_KEY not found in Streamlit secrets. Please add it in Secrets (TOML).")
+        st.stop()
+
+    # Additional safety check for empty string
+    if not api_key or api_key.strip() == "":
+        st.error("❌ OPENAI_API_KEY is empty. Please check your Streamlit secrets.")
+        st.stop()
+        
     model_choice = 'gpt-4o'
     st.header("📖 How to Use")
     st.markdown("""
