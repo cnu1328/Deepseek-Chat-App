@@ -269,35 +269,50 @@ def parse_gnews_date(article):
     return None
 
 
-def fetch_all_articles_for_window(keyword, lang, start_dt, end_dt, log_lines):
-    client = GNews(language=lang, country="IN", period="1d", max_results=1500)
-
-    # client.start_date = (start_dt.year, start_dt.month, start_dt.day)
-    # client.end_date   = (end_dt.year, end_dt.month, end_dt.day)
-
-    today_utc = datetime.now(timezone.utc).date()
-
-    # ✅ Apply date filter only if NOT today
-    if start_dt.date() != today_utc:
-        client.start_date = (start_dt.year, start_dt.month, start_dt.day)
-        client.end_date   = (end_dt.year, end_dt.month, end_dt.day)
-
+def fetch_all_articles_for_window(keyword, lang, from_date, to_date, start_dt, end_dt, log_lines):
+    """
+    from_date, to_date: user-selected calendar dates (for GNews RSS query: after/before).
+    start_dt, end_dt: UTC datetimes of the IST window (for post-filtering).
+    """
+    # GNews "period" means "last N days from TODAY" (rolling window). So for 26 Feb we must
+    # set period so that "last N days" includes 26 Feb (e.g. if today=28 Feb, use 3d), then
+    # we post-filter to start_dt/end_dt so only the selected date(s) are kept.
+    today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+    days_back = (today_ist - from_date).days + 1
+    period_days = max(1, min(days_back, 30))
+    period_str = f"{period_days}d"
+    client = GNews(language=lang, country="IN", period=period_str, max_results=1000)
+    # Use calendar dates so RSS matches direct URL (e.g. after:2026-02-25 before:2026-02-26)
+    client.start_date = (from_date.year, from_date.month, from_date.day)
+    # "before" in RSS is exclusive: use day after to_date so 25 Feb → before:2026-02-26
+    end_calendar = to_date + timedelta(days=1)
+    client.end_date = (end_calendar.year, end_calendar.month, end_calendar.day)
 
     all_articles = []
 
     try:
         raw = client.get_news(keyword)
         for a in (raw or []):
+            pub_dt = parse_gnews_date(a)
+            # Keep only articles whose publish time falls in the IST-derived window (UTC)
+            print(f"DEBUG: '{a.get('title', '')[:30]}...' published at '{a.get('published date', '')}' parsed as {pub_dt} UTC")
+            if pub_dt is None or not (start_dt <= pub_dt <= end_dt):
+                print(f"DEBUG:: Skipping '{a.get('title', '')[:30]}...' as it's outside '{pub_dt}'")
+                continue
             url = a.get("url", "")
             all_articles.append({
                 "title":     a.get("title", ""),
                 "publisher": a.get("publisher", {}).get("title", "") if a.get("publisher") else "",
                 "url":       url,
                 "pub_date":  str(a.get("published date", "")),
+                "pub_dt":    pub_dt,
             })
     except Exception as e:
         log_lines.append(f'<div class="log-line log-err">  [{lang.upper()}] Error: {e}</div>')
 
+    # Sort by published date (oldest first) for easier reading
+    _epoch = datetime.min.replace(tzinfo=timezone.utc)
+    all_articles.sort(key=lambda x: x.get("pub_dt") or _epoch)
     log_lines.append(f'<div class="log-line log-ok">  [{lang.upper()}] \'{keyword}\' → {len(all_articles)} articles</div>')
     return all_articles
 
@@ -342,6 +357,7 @@ def fetch_all_youtube_videos(keyword, api_key, start_dt, end_dt, log_lines):
                     continue
                 snippet = item["snippet"]
                 pub_str = snippet.get("publishedAt", "")
+                pub_dt = None
                 try:
                     pub_dt = datetime.strptime(pub_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
                     if not (start_dt <= pub_dt <= end_dt):
@@ -355,6 +371,7 @@ def fetch_all_youtube_videos(keyword, api_key, start_dt, end_dt, log_lines):
                     "channel":  snippet.get("channelTitle", ""),
                     "url":      f"https://www.youtube.com/watch?v={vid_id}",
                     "pub_date": pub_str[:10],
+                    "pub_dt":   pub_dt,
                 })
 
             next_page_token = response.get("nextPageToken")
@@ -365,6 +382,9 @@ def fetch_all_youtube_videos(keyword, api_key, start_dt, end_dt, log_lines):
     except Exception as e:
         log_lines.append(f'<div class="log-line log-err">  [YT] Build error: {e}</div>')
 
+    # Sort by published date (oldest first)
+    _epoch = datetime.min.replace(tzinfo=timezone.utc)
+    videos.sort(key=lambda x: x.get("pub_dt") or _epoch)
     log_lines.append(f'<div class="log-line log-ok">  [YT] \'{keyword}\' → {len(videos)} videos</div>')
     return videos
 
@@ -411,7 +431,7 @@ def build_excel(keyword_name, date_str, articles_by_lang, yt_videos):
     ws.title = keyword_name[:31]
 
     ws.merge_cells("A1:E1")
-    ws["A1"].value = f"Daily Report | {date_str}"
+    ws["A1"].value = f"Report | {date_str}"
     ws["A1"].font = TITLE_FONT; ws["A1"].fill = TITLE_FILL
     ws["A1"].alignment = CENTER; ws["A1"].border = MED_BORDER
     ws.row_dimensions[1].height = 28
@@ -425,15 +445,19 @@ def build_excel(keyword_name, date_str, articles_by_lang, yt_videos):
     current_row = 3
     serial_no   = 1
 
+    _epoch = datetime.min.replace(tzinfo=timezone.utc)
+
     for lang_code, label in [("en", "Articles (English)"), ("te", "Articles (Telugu)"), ("hi", "Articles (Hindi)")]:
         arts = articles_by_lang.get(lang_code, [])
         if not arts:
             continue
-        rows = [{"sno": serial_no + i, "headline": a["title"], "channel": a["publisher"], "url": a["url"]} for i, a in enumerate(arts)]
+        arts_sorted = sorted(arts, key=lambda a: a.get("pub_dt") or _epoch)
+        rows = [{"sno": serial_no + i, "headline": a["title"], "channel": a["publisher"], "url": a["url"]} for i, a in enumerate(arts_sorted)]
         serial_no  += len(rows)
         current_row = write_section(ws, label, rows, current_row)
 
-    yt_rows = [{"sno": serial_no + i, "headline": v["title"], "channel": v["channel"], "url": v["url"]} for i, v in enumerate(yt_videos)]
+    yt_sorted = sorted(yt_videos, key=lambda v: v.get("pub_dt") or _epoch)
+    yt_rows = [{"sno": serial_no + i, "headline": v["title"], "channel": v["channel"], "url": v["url"]} for i, v in enumerate(yt_sorted)]
     write_section(ws, "Youtube", yt_rows, current_row)
 
     ws.column_dimensions["A"].width = 22
@@ -456,18 +480,52 @@ if "results"  not in st.session_state:
     st.session_state.results  = []
 if "log_html" not in st.session_state:
     st.session_state.log_html = ""
+if "report_mode" not in st.session_state:
+    st.session_state.report_mode = "single"
 
 # ============================================================
 # SIDEBAR
 # ============================================================
 with st.sidebar:
     st.markdown('<div class="section-label">Date Selection</div>', unsafe_allow_html=True)
-    selected_date = st.date_input(
-        "Report Date",
-        value=datetime.now().date(),
-        max_value=datetime.now().date(),
-        help="Fetch news/videos published on this date (00:00 → 23:59 UTC)"
+    today_local = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+    report_mode = st.radio(
+        "Report type",
+        options=["single", "range"],
+        format_func=lambda x: "Single day" if x == "single" else "Date range",
+        key="report_mode_radio",
+        horizontal=True,
     )
+    st.session_state.report_mode = report_mode
+
+    if report_mode == "single":
+        selected_date = st.date_input(
+            "Report Date",
+            value=datetime.now().date(),
+            max_value=today_local,
+            help="Fetch news/videos published on this date (12:00 AM – 11:59 PM IST, or until now if today)",
+            key="single_date",
+        )
+        from_date = to_date = selected_date
+    else:
+        col_from, col_to = st.columns(2)
+        with col_from:
+            from_date = st.date_input(
+                "From date",
+                value=today_local,
+                max_value=today_local,
+                key="from_date",
+            )
+        with col_to:
+            to_date = st.date_input(
+                "To date",
+                value=today_local,
+                max_value=today_local,
+                key="to_date",
+            )
+        if from_date > to_date:
+            st.warning("From date must be on or before To date.")
+        selected_date = from_date  # for filename when range uses same from/to
 
     yt_api_key = os.getenv("YOUTUBE_API_KEY", "").strip()
 
@@ -504,17 +562,15 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 IST = ZoneInfo("Asia/Kolkata")
-
-# Start = 00:00:00 IST on selected date
-start_dt_ist = datetime.combine(selected_date, datetime.min.time(), tzinfo=IST)
-
-# End = 23:59:59 IST for past dates, or current IST time for today
 today_ist = datetime.now(IST).date()
-if selected_date == today_ist:
+
+# Start = 00:00:00 IST on from_date; End = 23:59:59 IST on to_date (or current time if to_date is today)
+start_dt_ist = datetime.combine(from_date, datetime.min.time(), tzinfo=IST)
+if to_date == today_ist:
     end_dt_ist = datetime.now(IST).replace(second=59, microsecond=0)
     end_label  = end_dt_ist.strftime("%d %b %Y  %I:%M %p IST") + " (now)"
 else:
-    end_dt_ist = datetime.combine(selected_date, datetime.max.time(), tzinfo=IST)
+    end_dt_ist = datetime.combine(to_date, datetime.max.time(), tzinfo=IST)
     end_label  = end_dt_ist.strftime("%d %b %Y  11:59 PM IST")
 
 # Convert to UTC for API calls
@@ -522,7 +578,7 @@ start_dt = start_dt_ist.astimezone(timezone.utc)
 end_dt   = end_dt_ist.astimezone(timezone.utc)
 
 start_label = start_dt_ist.strftime("%d %b %Y  12:00 AM IST")
-st.info(f"🕐 Fetching content published between **{start_label}** and **{end_label}**")
+st.info(f"🕐 Fetching content published between **{start_label}** and **{end_label}** (IST)")
 
 # ============================================================
 # GENERATE
@@ -531,6 +587,8 @@ if generate_btn:
     valid_kws = [k for k in st.session_state.keywords if k["en"].strip()]
     if not valid_kws:
         st.error("Please enter at least one keyword (English name is required).")
+    elif report_mode == "range" and from_date > to_date:
+        st.error("From date must be on or before To date.")
     else:
         st.session_state.results  = []
         st.session_state.log_html = ""
@@ -539,6 +597,13 @@ if generate_btn:
 
         total        = len(valid_kws)
         progress_bar = st.progress(0, text="Starting…")
+
+        if report_mode == "single":
+            date_str = from_date.strftime("%d %b %Y").upper()
+            file_date_suffix = from_date.strftime("%Y%m%d")
+        else:
+            date_str = f"{from_date.strftime('%d %b %Y')} – {to_date.strftime('%d %b %Y')}"
+            file_date_suffix = f"{from_date.strftime('%Y%m%d')}_{to_date.strftime('%Y%m%d')}"
 
         for ki, kw in enumerate(valid_kws):
             name_en = kw["en"].strip()
@@ -551,15 +616,15 @@ if generate_btn:
             articles_by_lang = {}
 
             progress_bar.progress((ki * 4 + 1) / (total * 4), text=f"{name_en}: fetching English articles…")
-            articles_by_lang["en"] = fetch_all_articles_for_window(name_en, "en", start_dt, end_dt, log_lines)
+            articles_by_lang["en"] = fetch_all_articles_for_window(name_en, "en", from_date, to_date, start_dt, end_dt, log_lines)
 
             progress_bar.progress((ki * 4 + 2) / (total * 4), text=f"{name_en}: fetching Telugu articles…")
             if name_te:
-                articles_by_lang["te"] = fetch_all_articles_for_window(name_te, "te", start_dt, end_dt, log_lines)
+                articles_by_lang["te"] = fetch_all_articles_for_window(name_te, "te", from_date, to_date, start_dt, end_dt, log_lines)
 
             progress_bar.progress((ki * 4 + 3) / (total * 4), text=f"{name_en}: fetching Hindi articles…")
             if name_hi:
-                articles_by_lang["hi"] = fetch_all_articles_for_window(name_hi, "hi", start_dt, end_dt, log_lines)
+                articles_by_lang["hi"] = fetch_all_articles_for_window(name_hi, "hi", from_date, to_date, start_dt, end_dt, log_lines)
 
             progress_bar.progress((ki * 4 + 4) / (total * 4), text=f"{name_en}: fetching YouTube videos…")
             yt_videos = []
@@ -568,13 +633,12 @@ if generate_btn:
             else:
                 log_lines.append('<div class="log-line log-err">  [YT] YOUTUBE_API_KEY not set in .env — skipping YouTube</div>')
 
-            date_str    = selected_date.strftime("%d %b %Y").upper()
             excel_bytes = build_excel(name_en, date_str, articles_by_lang, yt_videos)
 
             results.append({
                 "name":     name_en,
                 "excel":    excel_bytes,
-                "filename": f"{name_en}_daily_report_{selected_date.strftime('%Y%m%d')}.xlsx",
+                "filename": f"{name_en}_report_{file_date_suffix}.xlsx",
                 "total_en": len(articles_by_lang.get("en", [])),
                 "total_te": len(articles_by_lang.get("te", [])),
                 "total_hi": len(articles_by_lang.get("hi", [])),
