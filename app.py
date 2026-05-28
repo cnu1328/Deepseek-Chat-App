@@ -10,7 +10,7 @@ from urllib.parse import urlparse, parse_qs
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain.schema import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 import tiktoken
 import json
 import http.client
