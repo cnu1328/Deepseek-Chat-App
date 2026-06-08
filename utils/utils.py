@@ -10,8 +10,8 @@ import pandas as pd
 import streamlit as st
 import http.client
 from langchain_groq import ChatGroq
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.schema import HumanMessage, SystemMessage
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.messages import HumanMessage, SystemMessage
 from utils.constants import MODEL_NAME, CHUNK_SIZE, CHUNK_OVERLAP, \
     CHUNK_SYSTEM_MESSAGES, CHUNK_USER_PROMPTS, FINAL_SYSTEM_MESSAGES, FINAL_USER_PROMPTS, \
     ULTRA_CONCISE_SYSTEM_MESSAGES, ULTRA_CONCISE_USER_PROMPTS, SENTIMENT_SYSTEM_MESSAGE, SENTIMENT_USER_PROMPT

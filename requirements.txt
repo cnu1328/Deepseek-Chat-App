@@ -1,6 +1,7 @@
 streamlit              # Interactive data app framework  
 langchain              # LangChain framework for building language model applications  
 langchain-core         # Core utilities and abstractions for LangChain  
+langchain-text-splitters
 langchain-community    # Community-contributed integrations and tools for LangChain  
 
 langchain-groq         # Groq integration for LangChain  

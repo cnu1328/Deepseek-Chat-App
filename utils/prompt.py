@@ -1,5 +1,5 @@
 
-from langchain.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 
 Chunk_Summary_Prompt = ChatPromptTemplate.from_template(
     """
